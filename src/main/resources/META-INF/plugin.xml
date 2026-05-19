@@ -4,9 +4,22 @@
     <name>Niivue Viewer</name>
     <vendor>felixstieglitz</vendor>
     <description><![CDATA[
-        <p><b>niivue-jetbrains</b> is a repository that provides a pure template to make it easier to create a new plugin project.</p>
-        <p>The main goal of this template is to speed up the setup phase of plugin development for both new and experienced developers by preconfiguring the project scaffold and CI, linking to the proper documentation pages, and keeping everything organized.</p>
+        <p><b>Niivue Viewer</b> opens NIfTI medical imaging files (<code>.nii</code>, <code>.nii.gz</code>) directly in your JetBrains IDE.</p>
+        <p>Powered by <a href="https://github.com/niivue/niivue">Niivue</a> — the same WebGL2 viewer used in the standalone web app and the VSCode extension. Double-click a <code>.nii</code> file in the Project View and it opens in an editor tab with multiplanar slices (axial, coronal, sagittal) plus a 3D render in a 2×2 grid.</p>
+        <p>Useful for researchers and developers working with neuroimaging or other NIfTI-stored volumes — particularly when you already use Python tooling (nibabel, dipy, ANTs, FSL, nilearn) and want to inspect a volume without leaving the IDE.</p>
+        <p>Early release. Currently supports <code>.nii</code> and <code>.nii.gz</code>.</p>
     ]]></description>
+
+    <change-notes><![CDATA[
+        <h4>0.1.0</h4>
+        <ul>
+            <li>Initial release.</li>
+            <li>Open <code>.nii</code> and <code>.nii.gz</code> files in an editor tab via double-click from the Project View.</li>
+            <li>Multiplanar 2×2 grid layout: axial, coronal, sagittal slices plus an interactive 3D render.</li>
+            <li>HiDPI-aware rendering on Retina and high-DPI displays.</li>
+            <li>Embedded Niivue 0.68.2 (WebGL2). Works in IntelliJ IDEA, PyCharm, WebStorm, CLion and other JetBrains IDEs.</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
 

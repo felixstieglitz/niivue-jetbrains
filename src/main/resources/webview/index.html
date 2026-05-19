@@ -39,7 +39,8 @@
             const status = document.getElementById('status');
 
             const nv = new niivue.Niivue({
-                isResizeCanvas: false,
+                isResizeCanvas: true,
+                isHighResolutionCapable: true,
                 show3Dcrosshair: true,
                 isOrientCube: true,
                 logLevel: 'info',
@@ -49,16 +50,7 @@
             window.nv = nv;
             nv.attachToCanvas(canvas);
 
-            function resizeCanvas() {
-                const dpr = window.devicePixelRatio || 1;
-                const rect = canvas.getBoundingClientRect();
-                canvas.width = Math.max(1, Math.round(rect.width * dpr));
-                canvas.height = Math.max(1, Math.round(rect.height * dpr));
-                nv.resizeListener();
-            }
-            resizeCanvas();
-            window.addEventListener('resize', resizeCanvas);
-            new ResizeObserver(resizeCanvas).observe(canvas);
+            new ResizeObserver(() => nv.resizeListener()).observe(canvas);
 
             window.loadNiivueVolume = async function (base64, name) {
                 try {
