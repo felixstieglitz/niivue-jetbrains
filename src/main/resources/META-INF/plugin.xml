@@ -13,5 +13,9 @@
     <resource-bundle>messages.NiivueBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
+        <fileType name="NIfTI"
+                  implementationClass="com.github.felixstieglitz.niivuejetbrains.filetype.NiftiFileType"
+                  fieldName="INSTANCE"
+                  extensions="nii;nii.gz"/>
     </extensions>
 </idea-plugin>

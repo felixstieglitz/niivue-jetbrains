@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Niivue Viewer</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+            color: #ccc;
+            font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", monospace;
+        }
+        #gl {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        #status {
+            position: fixed;
+            top: 10px;
+            left: 12px;
+            pointer-events: none;
+            text-shadow: 0 0 4px #000;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gl"></canvas>
+    <div id="status">Initializing...</div>
+
+    <script>// @@NIIVUE_BUNDLE_INJECTION_POINT@@</script>
+
+    <script>
+        (function () {
+            const canvas = document.getElementById('gl');
+            const status = document.getElementById('status');
+
+            const nv = new niivue.Niivue({
+                isResizeCanvas: false,
+                show3Dcrosshair: true,
+                isOrientCube: true,
+                logLevel: 'info',
+            });
+            window.nv = nv;
+            nv.attachToCanvas(canvas);
+
+            function resizeCanvas() {
+                const dpr = window.devicePixelRatio || 1;
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = Math.max(1, Math.round(rect.width * dpr));
+                canvas.height = Math.max(1, Math.round(rect.height * dpr));
+                nv.resizeListener();
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            new ResizeObserver(resizeCanvas).observe(canvas);
+
+            window.loadNiivueVolume = async function (base64, name) {
+                try {
+                    status.textContent = 'Loading ' + name + '...';
+                    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+                    await nv.loadFromArrayBuffer(bytes.buffer, name);
+                    status.textContent = '';
+                } catch (err) {
+                    status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+                    console.error('[Niivue] load failed:', err);
+                }
+            };
+
+            status.textContent = '';
+            window.__niivueReady = true;
+        })();
+    </script>
+</body>
+</html>
