@@ -17,5 +17,6 @@
                   implementationClass="com.github.felixstieglitz.niivuejetbrains.filetype.NiftiFileType"
                   fieldName="INSTANCE"
                   extensions="nii;nii.gz"/>
+        <fileEditorProvider implementation="com.github.felixstieglitz.niivuejetbrains.editor.NiivueFileEditorProvider"/>
     </extensions>
 </idea-plugin>
