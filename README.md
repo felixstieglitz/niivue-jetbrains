@@ -1,45 +1,65 @@
 # niivue-jetbrains
 
 ![Build](https://github.com/felixstieglitz/niivue-jetbrains/workflows/Build/badge.svg)
-[![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
-[![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
 
-## Template ToDo list
-- [x] Create a new [IntelliJ Platform Plugin Template][template] project.
-- [ ] Get familiar with the [template documentation][template].
-- [ ] Adjust the [group](./gradle.properties), as well as the [id](./src/main/resources/META-INF/plugin.xml), [name](./src/main/resources/META-INF/plugin.xml), and [sources package](./src/main/kotlin).
-- [ ] Adjust the plugin [description](./src/main/resources/META-INF/plugin.xml) (see [Tips][docs:plugin-description]) and this README to describe what your plugin does.
-- [ ] Review the [Legal Agreements](https://plugins.jetbrains.com/docs/marketplace/legal-agreements.html?from=IJPluginTemplate).
-- [ ] [Publish a plugin manually](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginTemplate) for the first time.
-- [ ] Set the `MARKETPLACE_ID` in the above README badges. You can obtain it once the plugin is published to JetBrains Marketplace.
-- [ ] Set the [Plugin Signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html?from=IJPluginTemplate) related [secrets](https://github.com/JetBrains/intellij-platform-plugin-template#environment-variables).
-- [ ] Set the [Deployment Token](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html?from=IJPluginTemplate).
-- [ ] Click the <kbd>Watch</kbd> button on the top of the [IntelliJ Platform Plugin Template][template] to be notified about releases containing new features and fixes.
+A JetBrains plugin that opens NIfTI medical imaging files (`.nii`, `.nii.gz`) directly in IntelliJ IDEA, PyCharm, WebStorm, CLion and other JetBrains IDEs. Powered by [Niivue](https://github.com/niivue/niivue), the same WebGL2 viewer used in the [Niivue VSCode extension](https://github.com/niivue/niivue-vscode) and the standalone web app.
 
-This Fancy IntelliJ Platform Plugin is going to be your implementation of the brilliant ideas that you have.
+## What it does
+
+Double-click a `.nii` or `.nii.gz` file in the Project View. It opens in an editor tab showing:
+
+- **Axial, coronal, sagittal slices** in a 2×2 grid
+- **Interactive 3D render** in the fourth quadrant
+- **Orientation cube** indicating anatomical axes (L/R, A/P, S/I)
+
+The viewer is HiDPI-aware and works in any JetBrains IDE with embedded Chromium (JCEF) support.
 
 ## Installation
 
-- Using the IDE built-in plugin system:
+### From source (until the plugin is published)
 
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>Marketplace</kbd> > <kbd>Search for "niivue-jetbrains"</kbd> >
-  <kbd>Install</kbd>
+```bash
+git clone https://github.com/felixstieglitz/niivue-jetbrains.git
+cd niivue-jetbrains
+./gradlew buildPlugin
+```
 
-- Using JetBrains Marketplace:
+The built `.zip` lands in `build/distributions/`. Install it in your IDE via <kbd>Settings</kbd> → <kbd>Plugins</kbd> → <kbd>⚙</kbd> → <kbd>Install plugin from disk…</kbd>.
 
-  Go to [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID) and install it by clicking the <kbd>Install to ...</kbd> button in case your IDE is running.
+### Running a sandbox for development
 
-  You can also download the [latest release](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID/versions) from JetBrains Marketplace and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
+```bash
+./gradlew runIde
+```
 
-- Manually:
+This launches an isolated IDE instance with the plugin loaded — useful when iterating on the plugin code.
 
-  Download the [latest release](https://github.com/felixstieglitz/niivue-jetbrains/releases/latest) and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
+## Use cases
 
+If you work with NIfTI files using Python tooling (`nibabel`, `dipy`, `ANTs`, `FSL`, `nilearn`) and want to inspect a volume without switching applications, this plugin gives you a fast, in-IDE viewer.
 
----
-Plugin based on the [IntelliJ Platform Plugin Template][template].
+## Requirements
 
-[template]: https://github.com/JetBrains/intellij-platform-plugin-template
-[docs:plugin-description]: https://plugins.jetbrains.com/docs/intellij/plugin-user-experience.html#plugin-description-and-presentation
+- A JetBrains IDE that ships with JCEF (embedded Chromium). All modern IntelliJ-based IDEs (2023.1+) qualify.
+- WebGL2-capable graphics. On hardware without WebGL2 the rendering surface stays blank.
+
+## Roadmap
+
+Possible additions for future releases:
+
+- DICOM (`.dcm`) support via the niivue DICOM loader
+- Mesh formats (`.gii`, `.mz3`)
+- Drag-and-drop overlays (load multiple volumes)
+- Streaming volume transfer (current implementation Base64-encodes the file for the bridge — fine up to ~100 MB, suboptimal beyond)
+- Settings panel for default colormap, background, view mode
+
+## License & attribution
+
+This plugin is open source. It bundles two assets from the [Niivue project](https://github.com/niivue/niivue), both © Niivue and BSD-2-Clause licensed:
+
+- The Niivue JavaScript library (used to render the viewer)
+- The Niivue brain logo (used as the plugin's Marketplace icon)
+
+The full BSD-2-Clause notice ships with the plugin at [src/main/resources/webview/NIIVUE_LICENSE.txt](src/main/resources/webview/NIIVUE_LICENSE.txt) and covers both assets.
+
+This plugin is a community project and is **not officially affiliated with, endorsed by, or sponsored by the Niivue project**.
