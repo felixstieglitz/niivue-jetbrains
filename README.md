@@ -16,42 +16,18 @@ The viewer is HiDPI-aware and works in any JetBrains IDE with embedded Chromium 
 
 ## Installation
 
-### From source (until the plugin is published)
+Install via the JetBrains Marketplace from within your IDE:
 
-```bash
-git clone https://github.com/felixstieglitz/niivue-jetbrains.git
-cd niivue-jetbrains
-./gradlew buildPlugin
-```
-
-The built `.zip` lands in `build/distributions/`. Install it in your IDE via <kbd>Settings</kbd> → <kbd>Plugins</kbd> → <kbd>⚙</kbd> → <kbd>Install plugin from disk…</kbd>.
-
-### Running a sandbox for development
-
-```bash
-./gradlew runIde
-```
-
-This launches an isolated IDE instance with the plugin loaded — useful when iterating on the plugin code.
+<kbd>Settings</kbd> → <kbd>Plugins</kbd> → <kbd>Marketplace</kbd> → search for "Niivue Viewer" → <kbd>Install</kbd>
 
 ## Use cases
 
-If you work with NIfTI files using Python tooling (`nibabel`, `dipy`, `ANTs`, `FSL`, `nilearn`) and want to inspect a volume without switching applications, this plugin gives you a fast, in-IDE viewer.
+View `.nii` and `.nii.gz` medical imaging files directly in your IDE.
 
 ## Requirements
 
-- A JetBrains IDE that ships with JCEF (embedded Chromium). All modern IntelliJ-based IDEs (2023.1+) qualify.
+- A JetBrains IDE **2025.2 or newer** with JCEF (embedded Chromium) support — true for all major IDEs (IntelliJ IDEA, PyCharm, WebStorm, CLion, …).
 - WebGL2-capable graphics. On hardware without WebGL2 the rendering surface stays blank.
-
-## Roadmap
-
-Possible additions for future releases:
-
-- DICOM (`.dcm`) support via the niivue DICOM loader
-- Mesh formats (`.gii`, `.mz3`)
-- Drag-and-drop overlays (load multiple volumes)
-- Streaming volume transfer (current implementation Base64-encodes the file for the bridge — fine up to ~100 MB, suboptimal beyond)
-- Settings panel for default colormap, background, view mode
 
 ## License & attribution
 
