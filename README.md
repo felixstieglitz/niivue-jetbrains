@@ -53,6 +53,13 @@ Possible additions for future releases:
 - Streaming volume transfer (current implementation Base64-encodes the file for the bridge — fine up to ~100 MB, suboptimal beyond)
 - Settings panel for default colormap, background, view mode
 
-## License
+## License & attribution
 
-This plugin is open source. The bundled Niivue library is BSD-2-Clause licensed; see [src/main/resources/webview/NIIVUE_LICENSE.txt](src/main/resources/webview/NIIVUE_LICENSE.txt).
+This plugin is open source. It bundles two assets from the [Niivue project](https://github.com/niivue/niivue), both © Niivue and BSD-2-Clause licensed:
+
+- The Niivue JavaScript library (used to render the viewer)
+- The Niivue brain logo (used as the plugin's Marketplace icon)
+
+The full BSD-2-Clause notice ships with the plugin at [src/main/resources/webview/NIIVUE_LICENSE.txt](src/main/resources/webview/NIIVUE_LICENSE.txt) and covers both assets.
+
+This plugin is a community project and is **not officially affiliated with, endorsed by, or sponsored by the Niivue project**.
