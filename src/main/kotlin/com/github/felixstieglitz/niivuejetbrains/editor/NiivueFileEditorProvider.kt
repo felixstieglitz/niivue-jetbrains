@@ -7,11 +7,22 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 
+private val SUPPORTED_EXTENSIONS = setOf(
+    ".nii", ".nii.gz",
+    ".nrrd", ".nhdr",
+    ".mgh", ".mgz",
+    ".mha",
+    ".mif", ".mif.gz", ".mih",
+    ".v", ".v16", ".vmr",
+    ".npy", ".npz",
+)
+
 class NiivueFileEditorProvider : FileEditorProvider, DumbAware {
 
-    override fun accept(project: Project, file: VirtualFile): Boolean =
-        file.name.endsWith(".nii", ignoreCase = true) ||
-            file.name.endsWith(".nii.gz", ignoreCase = true)
+    override fun accept(project: Project, file: VirtualFile): Boolean {
+        val name = file.name.lowercase()
+        return SUPPORTED_EXTENSIONS.any { name.endsWith(it) }
+    }
 
     override fun createEditor(project: Project, file: VirtualFile): FileEditor =
         NiivueFileEditor(project, file)
