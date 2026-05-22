@@ -24,8 +24,6 @@
 
     <depends>com.intellij.modules.platform</depends>
 
-    <resource-bundle>messages.NiivueBundle</resource-bundle>
-
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="NIfTI"
                   implementationClass="com.github.felixstieglitz.niivuejetbrains.filetype.NiftiFileType"
