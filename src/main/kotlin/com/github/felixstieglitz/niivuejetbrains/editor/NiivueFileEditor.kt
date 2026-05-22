@@ -8,7 +8,6 @@ import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorLocation
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
-import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
@@ -26,8 +25,10 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 
+private const val SOFT_LIMIT_BYTES = 200L * 1024 * 1024   // 200 MB — warn but proceed
+private const val HARD_LIMIT_BYTES = 1024L * 1024 * 1024  // 1 GB — refuse to load
+
 class NiivueFileEditor(
-    private val project: Project,
     private val file: VirtualFile
 ) : UserDataHolderBase(), FileEditor {
 
@@ -79,19 +80,32 @@ class NiivueFileEditor(
     }
 
     private fun scheduleVolumeLoad(b: JBCefBrowser) {
+        val fileSize = file.length
+        val sizeMB = fileSize / (1024 * 1024)
+        if (fileSize > HARD_LIMIT_BYTES) {
+            val maxMB = HARD_LIMIT_BYTES / (1024 * 1024)
+            showStatus(b, "File too large ($sizeMB MB). Maximum supported size is $maxMB MB.")
+            return
+        }
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
+                if (fileSize > SOFT_LIMIT_BYTES) {
+                    showStatus(b, "Loading large file ($sizeMB MB), this may take a moment...")
+                }
                 val bytes = file.contentsToByteArray()
                 val base64 = Base64.getEncoder().encodeToString(bytes)
                 val js = "window.loadNiivueVolume(${jsString(base64)}, ${jsString(file.name)})"
                 b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
             } catch (t: Throwable) {
                 thisLogger().warn("Failed to load NIfTI volume from ${file.path}", t)
-                val msg = "Failed to load: ${t.message ?: t.javaClass.simpleName}"
-                val js = "document.getElementById('status').textContent = ${jsString(msg)}"
-                b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
+                showStatus(b, "Failed to load: ${t.message ?: t.javaClass.simpleName}")
             }
         }
+    }
+
+    private fun showStatus(b: JBCefBrowser, msg: String) {
+        val js = "document.getElementById('status').textContent = ${jsString(msg)}"
+        b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
     }
 
     private fun buildHtml(): String {
@@ -111,6 +125,8 @@ class NiivueFileEditor(
                 c == '\r' -> append("\\r")
                 c == '\t' -> append("\\t")
                 c == '<' -> append("\\u003c")
+                c.code == 0x2028 -> append("\\u2028")
+                c.code == 0x2029 -> append("\\u2029")
                 c.code < 0x20 -> append("\\u%04x".format(c.code))
                 else -> append(c)
             }

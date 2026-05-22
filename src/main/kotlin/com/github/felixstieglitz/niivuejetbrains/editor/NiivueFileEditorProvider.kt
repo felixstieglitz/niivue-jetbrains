@@ -25,7 +25,7 @@ class NiivueFileEditorProvider : FileEditorProvider, DumbAware {
     }
 
     override fun createEditor(project: Project, file: VirtualFile): FileEditor =
-        NiivueFileEditor(project, file)
+        NiivueFileEditor(file)
 
     override fun getEditorTypeId(): String = "niivue-viewer"
 
