@@ -25,9 +25,31 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 
-private const val SOFT_LIMIT_BYTES = 200L * 1024 * 1024   // 200 MB — warn but proceed
-private const val HARD_LIMIT_BYTES = 1024L * 1024 * 1024  // 1 GB — refuse to load
+/** File size at which a "loading large file" warning is shown to the user. */
+private const val SOFT_LIMIT_BYTES = 200L * 1024 * 1024   // 200 MB
 
+/** Maximum supported file size. Larger files are refused to prevent IDE OOM. */
+private const val HARD_LIMIT_BYTES = 1024L * 1024 * 1024  // 1 GB
+
+/**
+ * Editor tab that renders NIfTI and related medical-imaging volume files via
+ * the embedded [Niivue](https://github.com/niivue/niivue) WebGL2 viewer
+ * running in a [JBCefBrowser].
+ *
+ * The editor reads the file as raw bytes on a background thread, Base64-encodes
+ * them, and pushes the data into the webview via an `executeJavaScript` call
+ * to `window.loadNiivueVolume(...)`. Niivue handles format detection (including
+ * gzip decompression) and rendering.
+ *
+ * Files larger than [HARD_LIMIT_BYTES] are refused to prevent IDE OOM; files
+ * between [SOFT_LIMIT_BYTES] and the hard limit are loaded with a warning in
+ * the status overlay.
+ *
+ * Browser disposal cascades from this editor via [Disposer.register], so the
+ * editor's own [dispose] is empty. The empty `selectNotify`, `deselectNotify`,
+ * `addPropertyChangeListener` and friends are required by the [FileEditor]
+ * interface but unused — this is a stateless read-only viewer.
+ */
 class NiivueFileEditor(
     private val file: VirtualFile
 ) : UserDataHolderBase(), FileEditor {

@@ -34,8 +34,29 @@ Install via the JetBrains Marketplace from within your IDE:
 
 ## Requirements
 
-- A JetBrains IDE **2025.2 or newer** with JCEF (embedded Chromium) support — true for all major IDEs (IntelliJ IDEA, PyCharm, WebStorm, CLion, …).
+- A JetBrains IDE **2025.2 or newer** with JCEF (embedded Chromium) support - true for all major IDEs (IntelliJ IDEA, PyCharm, WebStorm, CLion, …).
 - WebGL2-capable graphics. On hardware without WebGL2 the rendering surface stays blank.
+
+## How it works
+
+The plugin registers a `FileEditorProvider` that claims the supported file
+extensions (see `plugin.xml`). When you double-click a supported file,
+the Jetbrains IDE creates a per-tab editor backed by a `JBCefBrowser` - an embedded
+Chromium instance. The browser loads a small HTML page that bundles the
+[Niivue](https://github.com/niivue/niivue) JavaScript library inline.
+
+The Kotlin side reads the file's bytes on a background thread, Base64-encodes
+them, and invokes `window.loadNiivueVolume(...)` in the webview via JCEF's
+`executeJavaScript` bridge. Niivue then handles format detection (NIfTI, NRRD,
+MGH, MetaImage, etc., plus gzip decompression) and WebGL2 rendering.
+
+Multiplanar slices (axial, coronal, sagittal) and an interactive 3D render
+are shown in a 2×2 grid via Niivue's `multiplanarForceRender` option. Per-tab
+browser disposal cascades from the `FileEditor` via IntelliJ's `Disposer`,
+so closing a tab releases the native Chromium instance cleanly.
+
+Single files larger than 1 GB are refused to prevent IDE out-of-memory; files between
+200 MB and 1 GB load with a user-visible warning in the status overlay.
 
 ## License & attribution
 
