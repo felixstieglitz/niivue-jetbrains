@@ -32,6 +32,18 @@ private const val SOFT_LIMIT_BYTES = 200L * 1024 * 1024   // 200 MB
 private const val HARD_LIMIT_BYTES = 1024L * 1024 * 1024  // 1 GB
 
 /**
+ * The viewer HTML with the Niivue bundle inlined, built once and shared across
+ * all editor instances. The bundle (~2.3 MB) is a static resource, so there's
+ * no reason to re-read and re-assemble it on every tab open.
+ */
+private val CACHED_HTML: String by lazy {
+    val cls = NiivueFileEditor::class.java
+    val template = cls.getResource("/webview/index.html")!!.readText()
+    val bundle = cls.getResource("/webview/niivue.umd.js")!!.readText()
+    template.replace("// @@NIIVUE_BUNDLE_INJECTION_POINT@@", bundle)
+}
+
+/**
  * Editor tab that renders NIfTI and related medical-imaging volume files via
  * the embedded [Niivue](https://github.com/niivue/niivue) WebGL2 viewer
  * running in a [JBCefBrowser].
@@ -57,12 +69,15 @@ class NiivueFileEditor(
     private val browser: JBCefBrowser? = createBrowser()
     private val firstLoadHandled = AtomicBoolean(false)
 
+    @Volatile
+    private var disposed = false
+
     private val mainComponent: JComponent = browser?.component ?: createUnsupportedComponent()
 
     init {
         if (browser != null) {
             installLoadHandler(browser)
-            browser.loadHTML(buildHtml())
+            browser.loadHTML(CACHED_HTML)
         }
     }
 
@@ -116,7 +131,11 @@ class NiivueFileEditor(
                 }
                 val bytes = file.contentsToByteArray()
                 val base64 = Base64.getEncoder().encodeToString(bytes)
-                val js = "window.loadNiivueVolume(${jsString(base64)}, ${jsString(file.name)})"
+                if (disposed) return@executeOnPooledThread
+                // Base64 output (RFC 4648) contains only [A-Za-z0-9+/=], none of which
+                // need JS-string escaping — wrap it directly. Only the filename, which
+                // can contain arbitrary characters, goes through jsString().
+                val js = "window.loadNiivueVolume(\"$base64\", ${jsString(file.name)})"
                 b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
             } catch (t: Throwable) {
                 thisLogger().warn("Failed to load NIfTI volume from ${file.path}", t)
@@ -128,13 +147,6 @@ class NiivueFileEditor(
     private fun showStatus(b: JBCefBrowser, msg: String) {
         val js = "document.getElementById('status').textContent = ${jsString(msg)}"
         b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
-    }
-
-    private fun buildHtml(): String {
-        val cls = NiivueFileEditor::class.java
-        val template = cls.getResource("/webview/index.html")!!.readText()
-        val bundle = cls.getResource("/webview/niivue.umd.js")!!.readText()
-        return template.replace("// @@NIIVUE_BUNDLE_INJECTION_POINT@@", bundle)
     }
 
     private fun jsString(s: String): String = buildString(s.length + 2) {
@@ -171,5 +183,7 @@ class NiivueFileEditor(
     override fun getCurrentLocation(): FileEditorLocation? = null
     override fun getStructureViewBuilder(): StructureViewBuilder? = null
     override fun getFile(): VirtualFile = file
-    override fun dispose() {}
+    override fun dispose() {
+        disposed = true
+    }
 }
