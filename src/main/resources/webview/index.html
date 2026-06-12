@@ -50,6 +50,17 @@
             window.nv = nv;
             nv.attachToCanvas(canvas);
 
+            // Scroll wheel support is intentionally disabled for now: JCEF
+            // delivers macOS trackpad scrolling as a raw un-coalesced event
+            // stream, and Niivue quantizes each event to a full ±1 slice step,
+            // which produces back-and-forth jitter. Until a satisfying scroll
+            // implementation lands, swallow all wheel events before Niivue's
+            // own listener sees them. Navigation works via click and drag.
+            window.addEventListener('wheel', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }, { capture: true, passive: false });
+
             new ResizeObserver(() => nv.resizeListener()).observe(canvas);
 
             window.loadNiivueVolume = async function (base64, name) {
