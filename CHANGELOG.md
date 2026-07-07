@@ -11,5 +11,6 @@
 - `FileEditorProvider` that opens supported files in an editor tab on double-click from the Project View.
 - Embedded [Niivue](https://github.com/niivue/niivue) 0.68.2 viewer (WebGL2).
 - Multiplanar 2×2 grid layout: axial, coronal, sagittal slices and 3D render.
+- Slice scrolling with mouse wheel and macOS trackpad (including 3D zoom in the render tile), driven by a Swing-side wheel bridge for reliable input.
 - HiDPI-aware rendering on Retina/HiDPI displays.
 - JCEF availability fallback: shows an explanatory message instead of crashing on IDE installations without embedded Chromium.

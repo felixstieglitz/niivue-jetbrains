@@ -2,7 +2,7 @@
 <idea-plugin>
     <id>com.github.felixstieglitz.niivuejetbrains</id>
     <name>Niivue Viewer</name>
-    <vendor>felixstieglitz</vendor>
+    <vendor url="https://github.com/felixstieglitz">felixstieglitz</vendor>
     <description><![CDATA[
         <p><b>Niivue Viewer</b> opens medical imaging volume files directly in your JetBrains IDE.</p>
         <p>Powered by <a href="https://github.com/niivue/niivue">Niivue</a> — the same WebGL2 viewer used in the standalone web app and the VSCode extension. Double-click a supported file in the Project View and it opens in an editor tab with multiplanar slices (axial, coronal, sagittal) plus a 3D render in a 2×2 grid.</p>

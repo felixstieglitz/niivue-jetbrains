@@ -11,6 +11,7 @@ Double-click a supported file in the Project View. It opens in an editor tab sho
 - **Axial, coronal, sagittal slices** in a 2×2 grid
 - **Interactive 3D render** in the fourth quadrant
 - **Orientation cube** indicating anatomical axes (L/R, A/P, S/I)
+- **Scroll through slices** with the mouse wheel or trackpad; scrolling over the 3D tile zooms
 
 The viewer is HiDPI-aware and works in any JetBrains IDE with embedded Chromium (JCEF) support.
 
