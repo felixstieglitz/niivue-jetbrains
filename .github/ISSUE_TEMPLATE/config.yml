@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Niivue rendering questions
+    url: https://github.com/niivue/niivue/discussions
+    about: Questions about the Niivue viewer itself (rendering, formats, colormaps) are best asked upstream.

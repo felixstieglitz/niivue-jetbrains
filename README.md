@@ -42,7 +42,7 @@ Install via the JetBrains Marketplace from within your IDE:
 
 The plugin registers a `FileEditorProvider` that claims the supported file
 extensions (see `plugin.xml`). When you double-click a supported file,
-the Jetbrains IDE creates a per-tab editor backed by a `JBCefBrowser` - an embedded
+the JetBrains IDE creates a per-tab editor backed by a `JBCefBrowser` - an embedded
 Chromium instance. The browser loads a small HTML page that bundles the
 [Niivue](https://github.com/niivue/niivue) JavaScript library inline.
 
@@ -51,6 +51,16 @@ them, and invokes `window.loadNiivueVolume(...)` in the webview via JCEF's
 `executeJavaScript` bridge. Niivue then handles format detection (NIfTI, NRRD,
 MGH, MetaImage, etc., plus gzip decompression) and WebGL2 rendering.
 
+Scroll input deliberately bypasses JCEF, whose own wheel-event synthesis is
+unreliable for macOS trackpads: the browser runs in off-screen rendering mode
+so it is an ordinary Swing component, a Swing `MouseWheelListener` forwards
+`preciseWheelRotation` plus the cursor position into the page as
+`window.niivueWheel(delta, x, y)` calls, and the page swallows every native
+wheel event. A small stepper in the webview coalesces that stream into
+discrete slice steps and hands them to Niivue's built-in wheel listener as
+synthetic wheel events, which drives per-tile axis selection, crosshair sync
+across views, and 3D zoom exactly as in a plain browser.
+
 Multiplanar slices (axial, coronal, sagittal) and an interactive 3D render
 are shown in a 2×2 grid via Niivue's `multiplanarForceRender` option. Per-tab
 browser disposal cascades from the `FileEditor` via IntelliJ's `Disposer`,
@@ -58,6 +68,13 @@ so closing a tab releases the native Chromium instance cleanly.
 
 Single files larger than 1 GB are refused to prevent IDE out-of-memory; files between
 200 MB and 1 GB load with a user-visible warning in the status overlay.
+
+## Contributing
+
+Contributions are welcome — bug reports, format requests, and pull requests alike.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup (`./gradlew runIde`
+gives you a sandboxed IDE with the plugin installed), the project layout, and
+how to update the bundled Niivue version.
 
 ## License & attribution
 

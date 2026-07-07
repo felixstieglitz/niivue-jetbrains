@@ -1,0 +1,58 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [ bug ]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a `.nii.gz` file from the Project View
+        2. Scroll over the axial tile
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: format
+    attributes:
+      label: File format involved
+      placeholder: e.g. NIfTI (.nii.gz), NRRD, NumPy (.npy)
+    validations:
+      required: false
+  - type: input
+    id: ide
+    attributes:
+      label: IDE and version
+      description: Copy from **Help → About**
+      placeholder: e.g. PyCharm 2025.2.3 (Build 252.xxxxx)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 15.5 (Apple Silicon), Windows 11, Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: e.g. 0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output from **Help → Show Log in Finder/Explorer** (idea.log), if any.
+      render: text
+    validations:
+      required: false
