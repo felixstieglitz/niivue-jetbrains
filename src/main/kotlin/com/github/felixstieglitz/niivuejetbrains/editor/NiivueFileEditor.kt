@@ -77,6 +77,7 @@ class NiivueFileEditor(
     init {
         if (browser != null) {
             installLoadHandler(browser)
+            installWheelBridge(browser)
             browser.loadHTML(CACHED_HTML)
         }
     }
@@ -85,13 +86,47 @@ class NiivueFileEditor(
         if (!JBCefApp.isSupported()) return null
         return try {
             JBCefBrowser.createBuilder()
-                .setOffScreenRendering(false)
+                // Off-screen rendering keeps the browser a lightweight Swing
+                // component that receives ordinary Swing input events, which
+                // lets installWheelBridge() forward scroll input to the page
+                // itself. Windowed mode routes macOS trackpad scrolling
+                // through a native JCEF path that reaches the page as an
+                // unusable wheel-event stream.
+                .setOffScreenRendering(true)
                 .build()
                 .also { Disposer.register(this, it) }
         } catch (t: Throwable) {
             thisLogger().warn("Could not create JBCefBrowser for Niivue viewer", t)
             null
         }
+    }
+
+    /**
+     * Forwards Swing mouse-wheel input to the webview as
+     * `window.niivueWheel(delta, x, y)` calls.
+     *
+     * JCEF's own wheel synthesis is unreliable for macOS trackpads, so the
+     * page swallows every native wheel event (see the proxy in index.html)
+     * and scrolls exclusively through this bridge. Swing's
+     * [java.awt.event.MouseWheelEvent.getPreciseWheelRotation] reports
+     * trackpad gestures faithfully: small fractions per event for trackpads,
+     * ±1 per notch for mouse wheels. Coalescing and slice stepping happen on
+     * the JS side, so the raw values are forwarded as-is.
+     */
+    private fun installWheelBridge(b: JBCefBrowser) {
+        val listener = java.awt.event.MouseWheelListener { e ->
+            val rotation = e.preciseWheelRotation
+            if (rotation != 0.0) {
+                val js = "window.niivueWheel && window.niivueWheel($rotation, ${e.x}, ${e.y})"
+                b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
+            }
+            e.consume()
+        }
+        fun attach(c: java.awt.Component) {
+            c.addMouseWheelListener(listener)
+            if (c is java.awt.Container) c.components.forEach(::attach)
+        }
+        attach(b.component)
     }
 
     private fun createUnsupportedComponent(): JComponent =
