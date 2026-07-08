@@ -2,7 +2,6 @@ package com.github.felixstieglitz.niivuejetbrains.editor
 
 import com.intellij.codeHighlighting.BackgroundEditorHighlighter
 import com.intellij.ide.structureView.StructureViewBuilder
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorLocation
@@ -14,57 +13,59 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.utils.JBCefLocalRequestHandler
+import com.intellij.ui.jcef.utils.JBCefStreamResourceHandler
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.BorderLayout
 import java.beans.PropertyChangeListener
-import java.util.Base64
+import java.nio.file.Files
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 
-/** File size at which a "loading large file" warning is shown to the user. */
-private const val SOFT_LIMIT_BYTES = 200L * 1024 * 1024   // 200 MB
-
-/** Maximum supported file size. Larger files are refused to prevent IDE OOM. */
-private const val HARD_LIMIT_BYTES = 1024L * 1024 * 1024  // 1 GB
-
 /**
- * The viewer HTML with the Niivue bundle inlined, built once and shared across
- * all editor instances. The bundle (~2.3 MB) is a static resource, so there's
- * no reason to re-read and re-assemble it on every tab open.
+ * Protocol and authority of the virtual origin the viewer page lives on.
+ * Requests to it never leave Chromium: a per-browser [JBCefLocalRequestHandler]
+ * intercepts them before any network layer and serves the registered resources.
+ * Same setup as the platform's own JCEF image viewer.
  */
-private val CACHED_HTML: String by lazy {
-    val cls = NiivueFileEditor::class.java
-    val template = cls.getResource("/webview/index.html")!!.readText()
-    val bundle = cls.getResource("/webview/niivue.umd.js")!!.readText()
-    template.replace("// @@NIIVUE_BUNDLE_INJECTION_POINT@@", bundle)
-}
+private const val VIEWER_PROTOCOL = "http"
+private const val VIEWER_AUTHORITY = "localhost"
+private const val VIEWER_ORIGIN = "$VIEWER_PROTOCOL://$VIEWER_AUTHORITY"
 
 /**
  * Editor tab that renders NIfTI and related medical-imaging volume files via
  * the embedded [Niivue](https://github.com/niivue/niivue) WebGL2 viewer
  * running in a [JBCefBrowser].
  *
- * The editor reads the file as raw bytes on a background thread, Base64-encodes
- * them, and pushes the data into the webview via an `executeJavaScript` call
- * to `window.loadNiivueVolume(...)`. Niivue handles format detection (including
- * gzip decompression) and rendering.
+ * The viewer page, the Niivue bundle, and the volume bytes are all served to
+ * the browser through a per-browser CEF request handler (see
+ * [installRequestHandler]): the page fetches the volume from a per-editor URL
+ * and Chromium streams the bytes straight from a file stream. No Base64, no
+ * `executeJavaScript` payloads, and no size limit beyond renderer memory.
+ * Niivue handles format detection (including gzip decompression) and
+ * rendering.
  *
- * Files larger than [HARD_LIMIT_BYTES] are refused to prevent IDE OOM; files
- * between [SOFT_LIMIT_BYTES] and the hard limit are loaded with a warning in
- * the status overlay.
- *
- * Browser disposal cascades from this editor via [Disposer.register], so the
- * editor's own [dispose] is empty. The empty `selectNotify`, `deselectNotify`,
- * `addPropertyChangeListener` and friends are required by the [FileEditor]
- * interface but unused — this is a stateless read-only viewer.
+ * Browser disposal cascades from this editor via [Disposer.register], and
+ * in-flight volume streams are closed the same way. The empty `selectNotify`,
+ * `deselectNotify`, `addPropertyChangeListener` and friends are required by
+ * the [FileEditor] interface but unused — this is a stateless read-only
+ * viewer.
  */
 class NiivueFileEditor(
     private val file: VirtualFile
 ) : UserDataHolderBase(), FileEditor {
+
+    /**
+     * Per-editor volume path. All JCEF browsers share one Chromium request
+     * context, so the URL must be unique per tab to rule out any cross-tab
+     * response aliasing.
+     */
+    private val volumePath = "volume-${UUID.randomUUID()}"
 
     private val browser: JBCefBrowser? = createBrowser()
     private val firstLoadHandled = AtomicBoolean(false)
@@ -76,9 +77,10 @@ class NiivueFileEditor(
 
     init {
         if (browser != null) {
+            installRequestHandler(browser)
             installLoadHandler(browser)
             installWheelBridge(browser)
-            browser.loadHTML(CACHED_HTML)
+            browser.loadURL("$VIEWER_ORIGIN/index.html")
         }
     }
 
@@ -129,6 +131,43 @@ class NiivueFileEditor(
         attach(b.component)
     }
 
+    /**
+     * Registers the resources the viewer page consists of under
+     * [VIEWER_ORIGIN]. The handler rejects every request outside that mapping,
+     * so the page and the bundle must be served through it too (which also
+     * makes the volume fetch same-origin — no CORS involved).
+     *
+     * The provider lambdas run on a CEF thread once per request, so a reload
+     * gets fresh streams. Each [JBCefStreamResourceHandler] registers itself
+     * against this editor as its [Disposer] parent: streams are closed both
+     * at end-of-transfer and when the tab closes mid-transfer. After this
+     * editor is disposed, that registration throws and the handler falls back
+     * to rejecting the request, which is the behavior we want anyway.
+     */
+    private fun installRequestHandler(b: JBCefBrowser) {
+        val handler = JBCefLocalRequestHandler(VIEWER_PROTOCOL, VIEWER_AUTHORITY)
+        handler.addResource("index.html") { classpathResourceHandler("/webview/index.html", "text/html") }
+        handler.addResource("niivue.umd.js") { classpathResourceHandler("/webview/niivue.umd.js", "text/javascript") }
+        handler.addResource(volumePath) {
+            if (disposed) return@addResource null
+            // NIO bypasses the VFS content-load size limit (~20 MB) for local
+            // files; the VFS stream remains as fallback for e.g. archive entries.
+            val stream = file.fileSystem.getNioPath(file)?.let(Files::newInputStream)
+                ?: file.inputStream
+            JBCefStreamResourceHandler(
+                stream,
+                "application/octet-stream",
+                this,
+                mapOf("Cache-Control" to "no-store"),
+            )
+        }
+        b.jbCefClient.addRequestHandler(handler, b.cefBrowser)
+    }
+
+    private fun classpathResourceHandler(path: String, mimeType: String) =
+        if (disposed) null
+        else JBCefStreamResourceHandler(javaClass.getResourceAsStream(path)!!, mimeType, this)
+
     private fun createUnsupportedComponent(): JComponent =
         JPanel(BorderLayout()).apply {
             add(
@@ -152,35 +191,12 @@ class NiivueFileEditor(
     }
 
     private fun scheduleVolumeLoad(b: JBCefBrowser) {
-        val fileSize = file.length
-        val sizeMB = fileSize / (1024 * 1024)
-        if (fileSize > HARD_LIMIT_BYTES) {
-            val maxMB = HARD_LIMIT_BYTES / (1024 * 1024)
-            showStatus(b, "File too large ($sizeMB MB). Maximum supported size is $maxMB MB.")
-            return
-        }
-        ApplicationManager.getApplication().executeOnPooledThread {
-            try {
-                if (fileSize > SOFT_LIMIT_BYTES) {
-                    showStatus(b, "Loading large file ($sizeMB MB), this may take a moment...")
-                }
-                val bytes = file.contentsToByteArray()
-                val base64 = Base64.getEncoder().encodeToString(bytes)
-                if (disposed) return@executeOnPooledThread
-                // Base64 output (RFC 4648) contains only [A-Za-z0-9+/=], none of which
-                // need JS-string escaping — wrap it directly. Only the filename, which
-                // can contain arbitrary characters, goes through jsString().
-                val js = "window.loadNiivueVolume(\"$base64\", ${jsString(file.name)})"
-                b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
-            } catch (t: Throwable) {
-                thisLogger().warn("Failed to load NIfTI volume from ${file.path}", t)
-                showStatus(b, "Failed to load: ${t.message ?: t.javaClass.simpleName}")
-            }
-        }
-    }
-
-    private fun showStatus(b: JBCefBrowser, msg: String) {
-        val js = "document.getElementById('status').textContent = ${jsString(msg)}"
+        val sizeMB = file.length / (1024 * 1024)
+        // Only the fetch URL, name, and size cross the JS bridge; the page
+        // pulls the actual bytes through the request handler. The volume path
+        // is a UUID ([A-Fa-f0-9-]), safe to inline; the filename can contain
+        // arbitrary characters and goes through jsString().
+        val js = "window.loadNiivueVolume(\"$VIEWER_ORIGIN/$volumePath\", ${jsString(file.name)}, $sizeMB)"
         b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
     }
 

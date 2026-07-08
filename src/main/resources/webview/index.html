@@ -31,7 +31,7 @@
     <canvas id="gl"></canvas>
     <div id="status">Initializing...</div>
 
-    <script>// @@NIIVUE_BUNDLE_INJECTION_POINT@@</script>
+    <script src="niivue.umd.js"></script>
 
     <script>
         (function () {
@@ -150,11 +150,17 @@
 
             new ResizeObserver(() => nv.resizeListener()).observe(canvas);
 
-            window.loadNiivueVolume = async function (base64, name) {
+            // The URL points at the per-editor volume resource served by the
+            // IDE-side request handler (same origin as this page); the fetch
+            // streams the bytes straight from disk through Chromium.
+            window.loadNiivueVolume = async function (url, name, sizeMB) {
                 try {
-                    status.textContent = 'Loading ' + name + '...';
-                    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-                    await nv.loadFromArrayBuffer(bytes.buffer, name);
+                    status.textContent = 'Loading ' + name +
+                        (sizeMB >= 200 ? ' (' + sizeMB + ' MB, this may take a moment)...' : '...');
+                    const resp = await fetch(url);
+                    if (!resp.ok) throw new Error('fetch failed: HTTP ' + resp.status);
+                    const buf = await resp.arrayBuffer();
+                    await nv.loadFromArrayBuffer(buf, name);
                     status.textContent = '';
                 } catch (err) {
                     status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
