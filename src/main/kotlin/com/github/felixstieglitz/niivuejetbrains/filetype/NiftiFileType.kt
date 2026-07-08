@@ -5,7 +5,7 @@ import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.vfs.VirtualFile
 
 /**
- * The plugin's single [FileType] entry, registered in `plugin.xml` for all 15
+ * The plugin's single [FileType] entry, registered in `plugin.xml` for all 14
  * supported volume-file extensions (`*.nii`, `*.nii.gz`, `*.nrrd`, `*.mgh`, …).
  *
  * Although the file type carries the "NIfTI" name (the primary and most-common

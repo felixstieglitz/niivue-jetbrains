@@ -7,7 +7,7 @@
 ## [0.1.0]
 ### Added
 - Initial functional release.
-- File type registration for 15 volume file formats: NIfTI (`.nii`, `.nii.gz`), NRRD (`.nrrd`, `.nhdr`), FreeSurfer (`.mgh`, `.mgz`), MetaImage (`.mha`), MRtrix (`.mif`, `.mif.gz`, `.mih`), BrainVoyager (`.v`, `.v16`, `.vmr`), and NumPy (`.npy`, `.npz`).
+- File type registration for 14 volume file formats: NIfTI (`.nii`, `.nii.gz`), NRRD (`.nrrd`, `.nhdr`), FreeSurfer (`.mgh`, `.mgz`), MetaImage (`.mha`), MRtrix (`.mif`, `.mif.gz`, `.mih`), BrainVoyager (`.v16`, `.vmr`), and NumPy (`.npy`, `.npz`).
 - `FileEditorProvider` that opens supported files in an editor tab on double-click from the Project View.
 - Embedded [Niivue](https://github.com/niivue/niivue) 0.68.2 viewer (WebGL2).
 - Multiplanar 2×2 grid layout: axial, coronal, sagittal slices and 3D render.

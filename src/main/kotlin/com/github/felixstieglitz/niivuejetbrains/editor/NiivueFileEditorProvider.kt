@@ -21,7 +21,10 @@ private val SUPPORTED_EXTENSIONS = setOf(
     ".mgh", ".mgz",
     ".mha",
     ".mif", ".mif.gz", ".mih",
-    ".v", ".v16", ".vmr",
+    // BrainVoyager. Plain ".v" is intentionally NOT claimed: it is also the
+    // standard extension for Verilog, Coq, and V-language source files, and
+    // claiming it would hijack those as read-only binaries.
+    ".v16", ".vmr",
     ".npy", ".npz",
 )
 

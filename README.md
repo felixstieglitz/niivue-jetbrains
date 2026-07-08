@@ -30,7 +30,7 @@ Install via the JetBrains Marketplace from within your IDE:
 | FreeSurfer | `.mgh`, `.mgz` |
 | MetaImage | `.mha` |
 | MRtrix | `.mif`, `.mif.gz`, `.mih` |
-| BrainVoyager | `.v`, `.v16`, `.vmr` |
+| BrainVoyager | `.v16`, `.vmr` |
 | NumPy | `.npy`, `.npz` |
 
 ## Requirements
