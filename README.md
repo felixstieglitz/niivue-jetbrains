@@ -43,13 +43,16 @@ Install via the JetBrains Marketplace from within your IDE:
 The plugin registers a `FileEditorProvider` that claims the supported file
 extensions (see `plugin.xml`). When you double-click a supported file,
 the JetBrains IDE creates a per-tab editor backed by a `JBCefBrowser` - an embedded
-Chromium instance. The browser loads a small HTML page that bundles the
-[Niivue](https://github.com/niivue/niivue) JavaScript library inline.
+Chromium instance. A per-browser CEF request handler serves the viewer page, the
+[Niivue](https://github.com/niivue/niivue) JavaScript bundle, and the volume
+bytes from a virtual `http://localhost` origin; these requests are intercepted
+inside Chromium and never touch the network.
 
-The Kotlin side reads the file's bytes on a background thread, Base64-encodes
-them, and invokes `window.loadNiivueVolume(...)` in the webview via JCEF's
-`executeJavaScript` bridge. Niivue then handles format detection (NIfTI, NRRD,
-MGH, MetaImage, etc., plus gzip decompression) and WebGL2 rendering.
+The page fetches the volume from a per-editor URL, and Chromium streams the
+bytes directly from a file stream - no Base64 encoding, no `executeJavaScript`
+payloads, and no size limit beyond renderer memory. Niivue then handles format
+detection (NIfTI, NRRD, MGH, MetaImage, etc., plus gzip decompression) and
+WebGL2 rendering.
 
 Scroll input deliberately bypasses JCEF, whose own wheel-event synthesis is
 unreliable for macOS trackpads: the browser runs in off-screen rendering mode
@@ -66,8 +69,9 @@ are shown in a 2×2 grid via Niivue's `multiplanarForceRender` option. Per-tab
 browser disposal cascades from the `FileEditor` via IntelliJ's `Disposer`,
 so closing a tab releases the native Chromium instance cleanly.
 
-Single files larger than 1 GB are refused to prevent IDE out-of-memory; files between
-200 MB and 1 GB load with a user-visible warning in the status overlay.
+Files of 200 MB or more show a hint in the loading overlay that loading may
+take a moment; there is no hard size cap beyond what the Chromium renderer's
+memory can hold.
 
 ## Contributing
 
