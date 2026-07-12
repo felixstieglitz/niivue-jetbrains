@@ -13,6 +13,17 @@ Double-click a supported file in the Project View. It opens in an editor tab sho
 - **Orientation cube** indicating anatomical axes (L/R, A/P, S/I)
 - **Scroll through slices** with the mouse wheel or trackpad; scrolling over the 3D tile zooms
 
+A toolbar across the top gives you:
+
+- **View** — switch between axial, sagittal, coronal, 3D render and multiplanar; cycle through the views; cycle the 3D clip plane; reset the view; toggle interpolation, colorbar, radiological convention and the crosshair
+- **Zoom** — switch the mouse drag between crosshair navigation and pan/zoom
+- **ColorScale** — colormap, min/max window, opacity and inversion, per volume or overlay
+- **Overlay** — load a second volume on top (e.g. a segmentation mask or statistical map), then remove or replace it
+- **Header** — view the full NIfTI header, or reset voxel size to 1 and origin to 0
+- **Navigation** — step the crosshair along each anatomical axis and move through 4D timepoints
+
+**Keyboard shortcuts** (while the viewer is focused): `H`/`J`/`K`/`L` (plus `Shift+U`/`Shift+D`) move the crosshair — hold to keep moving; `1`–`5` pick a view; `V` cycles views; `C` cycles the clip plane; `R` resets the view.
+
 The viewer is HiDPI-aware and works in any JetBrains IDE with embedded Chromium (JCEF) support.
 
 ## Installation
@@ -43,7 +54,8 @@ Install via the JetBrains Marketplace from within your IDE:
 The plugin registers a `FileEditorProvider` that claims the supported file
 extensions (see `plugin.xml`). When you double-click a supported file,
 the JetBrains IDE creates a per-tab editor backed by a `JBCefBrowser` - an embedded
-Chromium instance. A per-browser CEF request handler serves the viewer page, the
+Chromium instance. A per-browser CEF request handler serves the viewer page
+(`index.html` and the toolbar/viewer module `viewer.js`), the
 [Niivue](https://github.com/niivue/niivue) JavaScript bundle, and the volume
 bytes from a virtual `http://localhost` origin; these requests are intercepted
 inside Chromium and never touch the network.
@@ -53,6 +65,12 @@ bytes directly from a file stream - no Base64 encoding, no `executeJavaScript`
 payloads, and no size limit beyond renderer memory. Niivue then handles format
 detection (NIfTI, NRRD, MGH, MetaImage, etc., plus gzip decompression) and
 WebGL2 rendering.
+
+The toolbar's **Overlay** action reuses the same transport. The page asks the
+IDE for a file through a `JBCefJSQuery` bridge; the Kotlin side opens the native
+IntelliJ file chooser, points a per-editor overlay URL at the chosen file, and
+the page fetches it back through the request handler — so overlays stream from
+disk with the same no-size-limit path as the base volume.
 
 Scroll input deliberately bypasses JCEF, whose own wheel-event synthesis is
 unreliable for macOS trackpads: the browser runs in off-screen rendering mode

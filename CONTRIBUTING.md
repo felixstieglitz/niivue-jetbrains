@@ -37,9 +37,10 @@ If you develop inside IntelliJ IDEA, shared run configurations are included:
 | Path | Purpose |
 |---|---|
 | `src/main/kotlin/.../filetype/` | `NiftiFileType` — registers the supported extensions |
-| `src/main/kotlin/.../editor/` | `NiivueFileEditorProvider` and `NiivueFileEditor` — the editor tab, JCEF browser, volume loading, and the Swing wheel bridge |
-| `src/main/resources/webview/` | `index.html` (viewer page + scroll stepper) and the bundled `niivue.umd.js` |
+| `src/main/kotlin/.../editor/` | `NiivueFileEditorProvider` and `NiivueFileEditor` — the editor tab, JCEF browser, volume loading, the Swing wheel bridge, and the `JBCefJSQuery` file-picker bridge for overlays |
+| `src/main/resources/webview/` | `index.html` (viewer page), `viewer.js` (toolbar + viewer logic, shared with the test bench), and the bundled `niivue.umd.js` |
 | `src/main/resources/META-INF/plugin.xml` | Plugin manifest |
+| `tests/` | `bench.html` — a manual visual test bench that loads the real `viewer.js` + `niivue.umd.js`, plus a `README.md` checklist |
 | `src/test/kotlin/` | Tests |
 
 The [README's "How it works" section](README.md#how-it-works) describes the
@@ -66,6 +67,23 @@ If you simplify any of these three pieces away, trackpad scrolling breaks in
 ways that only reproduce on real hardware — please test scroll changes with a
 physical macOS trackpad *and* a mouse wheel in `runIde` before opening a PR.
 
+### Keyboard shortcuts have their own invariant
+
+The toolbar's keyboard shortcuts (`viewer.js`, `installKeyboardShortcuts`) are
+deliberately handled *instead of* Niivue's built-in keys, not on top of them:
+
+- Niivue registers its own `keydown`/`keyup` listeners on the canvas (view cycle
+  `V`, clip `C`/`P`, and hard-coded `H`/`J`/`K`/`L`). We blank the configurable
+  hotkeys in the constructor **and** intercept in the capture phase, stopping our
+  keys before they reach the canvas — otherwise every press fires twice.
+- Niivue moves the crosshair once per `keydown` and relies on the host
+  auto-repeating `keydown` while a key is held. The JCEF/OSR webview does not
+  deliver those, so press-and-hold is driven by our own repeat timer.
+
+If you touch keyboard handling, verify in `runIde` that a single press does
+exactly one step (no double-cycle) and that holding a crosshair key repeats
+smoothly.
+
 ## Updating the bundled Niivue
 
 The viewer library ships inside the plugin (no network access at runtime):
@@ -75,7 +93,10 @@ The viewer library ships inside the plugin (no network access at runtime):
 2. Replace `src/main/resources/webview/niivue.umd.js`.
 3. Update `src/main/resources/webview/NIIVUE_VERSION` to the new version number.
 4. If Niivue's license text changed, refresh `NIIVUE_LICENSE.txt` as well.
-5. Smoke-test in `runIde`: open a volume, scroll all four tiles, resize the window.
+5. Smoke-test in `runIde`: open a volume, scroll all four tiles, resize the
+   window, and exercise the toolbar (switch views, add an overlay, open the
+   header) — a Niivue update can change the API the toolbar calls. The
+   `tests/bench.html` checklist covers the toolbar surface.
 
 ## Pull request guidelines
 
