@@ -2,17 +2,23 @@ package com.github.felixstieglitz.niivuejetbrains.editor
 
 import com.intellij.codeHighlighting.BackgroundEditorHighlighter
 import com.intellij.ide.structureView.StructureViewBuilder
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorLocation
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.fileEditor.FileEditorStateLevel
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBase
+import com.intellij.ui.jcef.JBCefJSQuery
 import com.intellij.ui.jcef.utils.JBCefLocalRequestHandler
 import com.intellij.ui.jcef.utils.JBCefStreamResourceHandler
 import org.cef.browser.CefBrowser
@@ -38,6 +44,13 @@ private const val VIEWER_AUTHORITY = "localhost"
 private const val VIEWER_ORIGIN = "$VIEWER_PROTOCOL://$VIEWER_AUTHORITY"
 
 /**
+ * Fixed resource path for the overlay volume picked via the toolbar. The
+ * file behind it changes per pick (see [NiivueFileEditor.overlayFile]); the
+ * page cache-busts each fetch with a query string.
+ */
+private const val OVERLAY_PATH = "overlay-volume"
+
+/**
  * Editor tab that renders NIfTI and related medical-imaging volume files via
  * the embedded [Niivue](https://github.com/niivue/niivue) WebGL2 viewer
  * running in a [JBCefBrowser].
@@ -57,6 +70,7 @@ private const val VIEWER_ORIGIN = "$VIEWER_PROTOCOL://$VIEWER_AUTHORITY"
  * viewer.
  */
 class NiivueFileEditor(
+    private val project: Project,
     private val file: VirtualFile
 ) : UserDataHolderBase(), FileEditor {
 
@@ -70,6 +84,25 @@ class NiivueFileEditor(
     private val browser: JBCefBrowser? = createBrowser()
     private val firstLoadHandled = AtomicBoolean(false)
 
+    /**
+     * JS-to-IDE bridge behind the toolbar's "Overlay > Add" entry. Created
+     * before [JBCefBrowser.loadURL] because JCEF only allows new queries
+     * while the native browser is not yet spawned.
+     */
+    private val pickFileQuery: JBCefJSQuery? =
+        browser?.let { JBCefJSQuery.create(it as JBCefBrowserBase) }
+
+    /**
+     * Volume the overlay resource path currently serves. Written on the EDT
+     * when the user picks a file, read on a CEF thread by the resource
+     * provider — volatile instead of mutating the request handler's
+     * (unsynchronized) resource map after browser start. The path is fixed
+     * and registered up front; each pick busts Chromium's cache with a
+     * `?v=<uuid>` query the handler ignores when matching.
+     */
+    @Volatile
+    private var overlayFile: VirtualFile? = null
+
     @Volatile
     private var disposed = false
 
@@ -80,6 +113,7 @@ class NiivueFileEditor(
             installRequestHandler(browser)
             installLoadHandler(browser)
             installWheelBridge(browser)
+            installPickFileHandler(browser)
             browser.loadURL("$VIEWER_ORIGIN/index.html")
         }
     }
@@ -147,21 +181,25 @@ class NiivueFileEditor(
     private fun installRequestHandler(b: JBCefBrowser) {
         val handler = JBCefLocalRequestHandler(VIEWER_PROTOCOL, VIEWER_AUTHORITY)
         handler.addResource("index.html") { classpathResourceHandler("/webview/index.html", "text/html") }
+        handler.addResource("viewer.js") { classpathResourceHandler("/webview/viewer.js", "text/javascript") }
         handler.addResource("niivue.umd.js") { classpathResourceHandler("/webview/niivue.umd.js", "text/javascript") }
-        handler.addResource(volumePath) {
-            if (disposed) return@addResource null
-            // NIO bypasses the VFS content-load size limit (~20 MB) for local
-            // files; the VFS stream remains as fallback for e.g. archive entries.
-            val stream = file.fileSystem.getNioPath(file)?.let(Files::newInputStream)
-                ?: file.inputStream
-            JBCefStreamResourceHandler(
-                stream,
-                "application/octet-stream",
-                this,
-                mapOf("Cache-Control" to "no-store"),
-            )
-        }
+        handler.addResource(volumePath) { volumeStreamHandler(file) }
+        handler.addResource(OVERLAY_PATH) { overlayFile?.let { volumeStreamHandler(it) } }
         b.jbCefClient.addRequestHandler(handler, b.cefBrowser)
+    }
+
+    private fun volumeStreamHandler(volume: VirtualFile): JBCefStreamResourceHandler? {
+        if (disposed) return null
+        // NIO bypasses the VFS content-load size limit (~20 MB) for local
+        // files; the VFS stream remains as fallback for e.g. archive entries.
+        val stream = volume.fileSystem.getNioPath(volume)?.let(Files::newInputStream)
+            ?: volume.inputStream
+        return JBCefStreamResourceHandler(
+            stream,
+            "application/octet-stream",
+            this,
+            mapOf("Cache-Control" to "no-store"),
+        )
     }
 
     private fun classpathResourceHandler(path: String, mimeType: String) =
@@ -180,6 +218,43 @@ class NiivueFileEditor(
             )
         }
 
+    /**
+     * Wires the toolbar's "Overlay > Add" entry to the IDE's native file
+     * chooser. The page calls `window.niivuePickFile()` (installed in
+     * [scheduleVolumeLoad]); the query handler hops to the EDT, shows the
+     * chooser, points the fixed overlay resource at the picked file, and
+     * reports the result back via `window.niivueViewerOnFilePicked` — the
+     * page then fetches the bytes through the request handler like the main
+     * volume, so overlays get the same no-size-limit streaming path.
+     */
+    private fun installPickFileHandler(b: JBCefBrowser) {
+        val query = pickFileQuery ?: return
+        Disposer.register(this, query)
+        query.addHandler {
+            ApplicationManager.getApplication().invokeLater { chooseOverlayFile(b) }
+            null
+        }
+    }
+
+    private fun chooseOverlayFile(b: JBCefBrowser) {
+        if (disposed) return
+        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor()
+            .withTitle("Add Overlay Volume")
+            .withDescription("Overlay a second volume (e.g. a segmentation mask or statistical map)")
+            .withFileFilter { isSupportedVolumeFileName(it.name) }
+        val chosen = FileChooser.chooseFile(descriptor, project, file.parent)
+        if (chosen == null || disposed) {
+            executeJs(b, "window.niivueViewerOnFilePicked(null, null, 0)")
+            return
+        }
+        overlayFile = chosen
+        val sizeMB = chosen.length / (1024 * 1024)
+        // Fresh query per pick so Chromium cannot serve a previous overlay
+        // from cache; the request handler matches on the path alone.
+        val url = "$VIEWER_ORIGIN/$OVERLAY_PATH?v=${UUID.randomUUID()}"
+        executeJs(b, "window.niivueViewerOnFilePicked(\"$url\", ${jsString(chosen.name)}, $sizeMB)")
+    }
+
     private fun installLoadHandler(b: JBCefBrowser) {
         b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
             override fun onLoadEnd(cefBrowser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
@@ -191,12 +266,20 @@ class NiivueFileEditor(
     }
 
     private fun scheduleVolumeLoad(b: JBCefBrowser) {
+        // Expose the file-pick bridge before the volume load so the toolbar
+        // is fully functional as soon as the image appears.
+        pickFileQuery?.let {
+            executeJs(b, "window.niivuePickFile = function() { ${it.inject("''")} };")
+        }
         val sizeMB = file.length / (1024 * 1024)
         // Only the fetch URL, name, and size cross the JS bridge; the page
         // pulls the actual bytes through the request handler. The volume path
         // is a UUID ([A-Fa-f0-9-]), safe to inline; the filename can contain
         // arbitrary characters and goes through jsString().
-        val js = "window.loadNiivueVolume(\"$VIEWER_ORIGIN/$volumePath\", ${jsString(file.name)}, $sizeMB)"
+        executeJs(b, "window.loadNiivueVolume(\"$VIEWER_ORIGIN/$volumePath\", ${jsString(file.name)}, $sizeMB)")
+    }
+
+    private fun executeJs(b: JBCefBrowser, js: String) {
         b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
     }
 

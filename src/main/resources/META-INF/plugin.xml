@@ -2,15 +2,29 @@
 <idea-plugin>
     <id>com.github.felixstieglitz.niivuejetbrains</id>
     <name>Niivue Viewer</name>
-    <vendor url="https://github.com/felixstieglitz">felixstieglitz</vendor>
+    <vendor url="https://github.com/felixstieglitz">Felix Stieglitz</vendor>
     <description><![CDATA[
         <p><b>Niivue Viewer</b> opens medical imaging volume files directly in your JetBrains IDE.</p>
         <p>Powered by <a href="https://github.com/niivue/niivue">Niivue</a> — the same WebGL2 viewer used in the standalone web app and the VSCode extension. Double-click a supported file in the Project View and it opens in an editor tab with multiplanar slices (axial, coronal, sagittal) plus a 3D render in a 2×2 grid.</p>
+        <p>A toolbar lets you switch views, pan and zoom, tune the colormap and window, overlay a second volume (such as a segmentation mask or statistical map), inspect the NIfTI header, and step the crosshair or move through 4D timepoints.</p>
         <p>Useful for researchers and developers working with neuroimaging or other 3D volume data — particularly when you already use Python tooling (nibabel, dipy, ANTs, FSL, nilearn) and want to inspect a volume without leaving the IDE.</p>
         <p><b>Supported formats:</b> NIfTI (<code>.nii</code>, <code>.nii.gz</code>), NRRD (<code>.nrrd</code>, <code>.nhdr</code>), FreeSurfer (<code>.mgh</code>, <code>.mgz</code>), MetaImage (<code>.mha</code>), MRtrix (<code>.mif</code>, <code>.mif.gz</code>, <code>.mih</code>), BrainVoyager (<code>.v16</code>, <code>.vmr</code>), NumPy (<code>.npy</code>, <code>.npz</code>).</p>
     ]]></description>
 
     <change-notes><![CDATA[
+        <h4>0.1.1</h4>
+        <ul>
+            <li>New toolbar with View, Zoom, ColorScale, Overlay, Header and Navigation menus.</li>
+            <li>View: switch between axial, sagittal, coronal, 3D render and multiplanar; cycle through all five views; cycle the 3D clip plane; toggle interpolation, colorbar, radiological convention and crosshair; reset the view (rotation, zoom and pan).</li>
+            <li>Keyboard shortcuts: H/J/K/L (plus Shift+U/D) move the crosshair, 1-5 pick a view, V cycles views, C cycles the clip plane, R resets the view.</li>
+            <li>Overlay: load a second volume (e.g. a segmentation mask or statistical map) on top of the current image, then remove or replace it.</li>
+            <li>ColorScale: adjust colormap, min/max window, opacity and inversion per volume or overlay.</li>
+            <li>Header: view the full NIfTI header, or reset voxel size to 1 and origin to 0.</li>
+            <li>Navigation: step the crosshair along each anatomical axis and move through 4D timepoints.</li>
+            <li>New overlay display: matrix size and voxel size (top left).</li>
+            <li>New crosshair readout: mm coordinates and voxel intensity at the crosshair position (bottom left).</li>
+            <li>Fixed the plugin icon on JetBrains Marketplace (now a true vector SVG).</li>
+        </ul>
         <h4>0.1.0</h4>
         <ul>
             <li>Initial release.</li>

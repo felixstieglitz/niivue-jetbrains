@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Niivue Viewer — Test Bench</title>
+    <style>
+        /* Bench-only chrome; the viewer injects its own styles on init. */
+        #bench {
+            flex: none; display: flex; align-items: center; gap: 10px;
+            background: #101014; border-bottom: 1px solid #2a2a2a;
+            padding: 6px 10px; color: #ccc;
+            font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", monospace;
+        }
+        #bench label { cursor: pointer; }
+        #bench .hint { color: #888; }
+        #bench code { color: #9ac; }
+    </style>
+</head>
+<body>
+    <!--
+      Manual visual test bench. Loads the SAME niivue.umd.js + viewer.js the
+      plugin ships, so what you see here is what the JetBrains editor renders.
+      Open this file directly (file://) — no server needed. Pick a base volume
+      to load it, then exercise the toolbar (View / Zoom / ColorScale /
+      Overlay / Header / Navigation). Test data lives in the sibling repo
+      ../../niivue-jetbrains-test-data/. See README.md for the checklist.
+    -->
+    <div id="bench">
+        <label>Base volume: <input type="file" id="baseInput"></label>
+        <span class="hint">then use the toolbar below · Overlay &gt; Add opens a second picker</span>
+    </div>
+
+    <div id="toolbar"></div>
+    <div id="viewport">
+        <canvas id="gl"></canvas>
+        <div id="meta"></div>
+        <div id="status">Pick a base volume to begin…</div>
+        <div id="loc"></div>
+    </div>
+
+    <script src="../src/main/resources/webview/niivue.umd.js"></script>
+    <script src="../src/main/resources/webview/viewer.js"></script>
+    <script>
+        // Bench pickFile: a plain file input, so Overlay works without the
+        // IDE bridge. Object URLs are same-origin blobs the viewer's fetch()
+        // reads exactly like the plugin's http://localhost resource.
+        function pickViaInput() {
+            return new Promise(function (resolve) {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.addEventListener('change', function () {
+                    const f = input.files && input.files[0];
+                    if (!f) { resolve(null); return; }
+                    resolve({
+                        url: URL.createObjectURL(f),
+                        name: f.name,
+                        sizeMB: Math.round(f.size / (1024 * 1024)),
+                    });
+                });
+                input.click();
+            });
+        }
+
+        NiivueViewer.init({ pickFile: pickViaInput });
+
+        document.getElementById('baseInput').addEventListener('change', function (e) {
+            const f = e.target.files && e.target.files[0];
+            if (!f) return;
+            window.loadNiivueVolume(
+                URL.createObjectURL(f), f.name, Math.round(f.size / (1024 * 1024)));
+        });
+    </script>
+</body>
+</html>

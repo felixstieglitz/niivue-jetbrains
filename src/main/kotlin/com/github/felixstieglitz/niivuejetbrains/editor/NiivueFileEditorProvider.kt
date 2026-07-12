@@ -29,6 +29,16 @@ private val SUPPORTED_EXTENSIONS = setOf(
 )
 
 /**
+ * Whether [name] carries one of the volume-format suffixes this plugin can
+ * render. Shared between editor routing ([NiivueFileEditorProvider.accept])
+ * and the overlay file chooser filter in [NiivueFileEditor].
+ */
+internal fun isSupportedVolumeFileName(name: String): Boolean {
+    val lower = name.lowercase()
+    return SUPPORTED_EXTENSIONS.any { lower.endsWith(it) }
+}
+
+/**
  * Routes supported medical-imaging volume files to [NiivueFileEditor].
  *
  * Uses [FileEditorPolicy.HIDE_DEFAULT_EDITOR] to prevent IntelliJ's binary/hex
@@ -37,13 +47,11 @@ private val SUPPORTED_EXTENSIONS = setOf(
  */
 class NiivueFileEditorProvider : FileEditorProvider, DumbAware {
 
-    override fun accept(project: Project, file: VirtualFile): Boolean {
-        val name = file.name.lowercase()
-        return SUPPORTED_EXTENSIONS.any { name.endsWith(it) }
-    }
+    override fun accept(project: Project, file: VirtualFile): Boolean =
+        isSupportedVolumeFileName(file.name)
 
     override fun createEditor(project: Project, file: VirtualFile): FileEditor =
-        NiivueFileEditor(file)
+        NiivueFileEditor(project, file)
 
     override fun getEditorTypeId(): String = "niivue-viewer"
 

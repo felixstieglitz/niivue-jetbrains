@@ -3,173 +3,23 @@
 <head>
     <meta charset="utf-8">
     <title>Niivue Viewer</title>
-    <style>
-        html, body {
-            margin: 0;
-            padding: 0;
-            height: 100%;
-            overflow: hidden;
-            background: #000;
-            color: #ccc;
-            font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", monospace;
-        }
-        #gl {
-            display: block;
-            width: 100vw;
-            height: 100vh;
-        }
-        #status {
-            position: fixed;
-            top: 10px;
-            left: 12px;
-            pointer-events: none;
-            text-shadow: 0 0 4px #000;
-        }
-    </style>
 </head>
 <body>
-    <canvas id="gl"></canvas>
-    <div id="status">Initializing...</div>
+    <div id="toolbar"></div>
+    <div id="viewport">
+        <canvas id="gl"></canvas>
+        <div id="meta"></div>
+        <div id="status">Initializing...</div>
+        <div id="loc"></div>
+    </div>
 
     <script src="niivue.umd.js"></script>
-
+    <script src="viewer.js"></script>
     <script>
-        (function () {
-            const canvas = document.getElementById('gl');
-            const status = document.getElementById('status');
-
-            const nv = new niivue.Niivue({
-                isResizeCanvas: true,
-                isHighResolutionCapable: true,
-                show3Dcrosshair: true,
-                isOrientCube: true,
-                logLevel: 'warn',
-                multiplanarLayout: niivue.MULTIPLANAR_TYPE.GRID,
-                multiplanarForceRender: true,
-            });
-            window.nv = nv;
-            nv.attachToCanvas(canvas);
-
-            // Scroll input arrives exclusively through the Swing-side bridge:
-            // the IDE forwards MouseWheelEvents as window.niivueWheel(delta,
-            // x, y) calls (see NiivueFileEditor.installWheelBridge), because
-            // JCEF's own wheel synthesis is unreliable for macOS trackpads.
-            // All native wheel events are therefore swallowed before Niivue's
-            // listener sees them; only our synthetic step events pass.
-            window.addEventListener('wheel', function (e) {
-                if (!e.isTrusted) return;
-                e.preventDefault();
-                e.stopPropagation();
-            }, { capture: true, passive: false });
-
-            // Bridge deltas are Swing preciseWheelRotation values (small
-            // fractions per event for trackpads, ±1 per notch for mice), so
-            // stepping is scale-independent: while events flow in a
-            // consistent direction, emit at most one synthetic wheel event
-            // per interval — Niivue's built-in listener then handles axis
-            // selection per tile, crosshair sync across views, and 3D
-            // render-tile zoom, exactly like in a plain browser.
-            (function () {
-                const GESTURE_GAP_MS = 250;   // idle time that ends a gesture
-                const CONSISTENCY = 0.35;     // |net|/gross ratio required to step
-                const WINDOW_MS = 150;        // max age of the netting window
-                const MOMENTUM_FACTOR = 0.12; // deltas below peak*this are inertia...
-                const MOMENTUM_CAP = 0.1;     // ...but never above this absolute value
-                                              // (in wheel-rotation units), so a single
-                                              // delta spike cannot raise the bar past
-                                              // the normal event magnitudes
-                let acc = 0;      // net signed delta in the current window
-                let gross = 0;    // sum of |delta| in the current window
-                let windowStart = 0;
-                let peak = 0;     // largest |delta| seen in the current gesture
-                let winCount = 0; // events in the current netting window
-                let lastEventTime = 0;
-                let lastStepTime = 0;
-                let lastStepDir = 0;
-                let stepInterval = 16; // adapts to the measured redraw cost
-
-                window.niivueWheel = function (delta, x, y) {
-                    if (typeof delta !== 'number' || delta === 0 || !isFinite(delta)) return;
-                    const mag = Math.abs(delta);
-                    const now = performance.now();
-
-                    if (now - lastEventTime > GESTURE_GAP_MS) {
-                        acc = 0; gross = 0; winCount = 0; peak = 0; windowStart = now;
-                    } else if (now - windowStart > WINDOW_MS) {
-                        acc = 0; gross = 0; winCount = 0; windowStart = now; // keep gesture peak
-                    }
-                    lastEventTime = now;
-                    acc += delta;
-                    gross += mag;
-                    winCount++;
-                    peak = Math.max(peak, mag);
-
-                    // macOS momentum phase: after the fingers lift, inertia
-                    // events keep flowing with far smaller, decaying deltas.
-                    // Let them net into the window but never step on them.
-                    if (mag < Math.min(peak * MOMENTUM_FACTOR, MOMENTUM_CAP)) return;
-
-                    const ratio = Math.abs(acc) / gross;
-                    const dir = acc > 0 ? 1 : -1;
-                    // Direction-change hysteresis: a step against the last
-                    // step's direction needs corroboration (several events in
-                    // the window, or a real pause since the last step), so a
-                    // single stray counter-event landing alone in a fresh
-                    // window cannot fire a backwards step.
-                    const dirOk = dir === lastStepDir
-                        || winCount >= 3
-                        || now - lastStepTime >= 100;
-                    if (now - lastStepTime >= stepInterval
-                            && ratio >= CONSISTENCY
-                            && dirOk) {
-                        const t0 = performance.now();
-                        canvas.dispatchEvent(new WheelEvent('wheel', {
-                            clientX: x,
-                            clientY: y,
-                            deltaY: dir * 100,
-                            bubbles: true,
-                            cancelable: true,
-                        }));
-                        const drawMs = performance.now() - t0;
-                        // Self-throttle to the measured redraw cost so we
-                        // never enqueue more work than the renderer absorbs.
-                        stepInterval = Math.min(100, Math.max(16, drawMs * 1.5));
-                        lastStepTime = now;
-                        lastStepDir = dir;
-                        // Only a step (or gap/age reset above) closes the
-                        // netting window; a failed consistency check keeps
-                        // accumulating so isolated wobble events cannot pass
-                        // as a fresh, trivially consistent window.
-                        acc = 0;
-                        gross = 0;
-                        winCount = 0;
-                        windowStart = now;
-                    }
-                };
-            })();
-
-            new ResizeObserver(() => nv.resizeListener()).observe(canvas);
-
-            // The URL points at the per-editor volume resource served by the
-            // IDE-side request handler (same origin as this page); the fetch
-            // streams the bytes straight from disk through Chromium.
-            window.loadNiivueVolume = async function (url, name, sizeMB) {
-                try {
-                    status.textContent = 'Loading ' + name +
-                        (sizeMB >= 200 ? ' (' + sizeMB + ' MB, this may take a moment)...' : '...');
-                    const resp = await fetch(url);
-                    if (!resp.ok) throw new Error('fetch failed: HTTP ' + resp.status);
-                    const buf = await resp.arrayBuffer();
-                    await nv.loadFromArrayBuffer(buf, name);
-                    status.textContent = '';
-                } catch (err) {
-                    status.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
-                    console.error('[Niivue] load failed:', err);
-                }
-            };
-
-            status.textContent = '';
-        })();
+        // Plugin mode: no pickFile override — Overlay > Add asks the IDE
+        // through the window.niivuePickFile bridge installed by
+        // NiivueFileEditor after page load.
+        NiivueViewer.init({});
     </script>
 </body>
 </html>
