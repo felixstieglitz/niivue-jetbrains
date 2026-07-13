@@ -238,7 +238,7 @@ class NiivueFileEditor(
 
     private fun chooseOverlayFile(b: JBCefBrowser) {
         if (disposed) return
-        val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor()
+        val descriptor = FileChooserDescriptorFactory.singleFile()
             .withTitle("Add Overlay Volume")
             .withDescription("Overlay a second volume (e.g. a segmentation mask or statistical map)")
             .withFileFilter { isSupportedVolumeFileName(it.name) }
