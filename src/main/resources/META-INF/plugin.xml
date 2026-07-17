@@ -11,30 +11,9 @@
         <p><b>Supported formats:</b> NIfTI (<code>.nii</code>, <code>.nii.gz</code>), NRRD (<code>.nrrd</code>, <code>.nhdr</code>), FreeSurfer (<code>.mgh</code>, <code>.mgz</code>), MetaImage (<code>.mha</code>), MRtrix (<code>.mif</code>, <code>.mif.gz</code>, <code>.mih</code>), BrainVoyager (<code>.v16</code>, <code>.vmr</code>), NumPy (<code>.npy</code>, <code>.npz</code>).</p>
     ]]></description>
 
-    <change-notes><![CDATA[
-        <h4>0.1.1</h4>
-        <ul>
-            <li>New toolbar with View, Zoom, ColorScale, Overlay, Header and Navigation menus.</li>
-            <li>View: switch between axial, sagittal, coronal, 3D render and multiplanar; cycle through all five views; cycle the 3D clip plane; toggle interpolation, colorbar, radiological convention and crosshair; reset the view (rotation, zoom and pan).</li>
-            <li>Keyboard shortcuts: H/J/K/L (plus Shift+U/D) move the crosshair, 1-5 pick a view, V cycles views, C cycles the clip plane, R resets the view.</li>
-            <li>Overlay: load a second volume (e.g. a segmentation mask or statistical map) on top of the current image, then remove or replace it.</li>
-            <li>ColorScale: adjust colormap, min/max window, opacity and inversion per volume or overlay.</li>
-            <li>Header: view the full NIfTI header, or reset voxel size to 1 and origin to 0.</li>
-            <li>Navigation: step the crosshair along each anatomical axis and move through 4D timepoints.</li>
-            <li>New overlay display: matrix size and voxel size (top left).</li>
-            <li>New crosshair readout: mm coordinates and voxel intensity at the crosshair position (bottom left).</li>
-            <li>Fixed the plugin icon on JetBrains Marketplace (now a true vector SVG).</li>
-        </ul>
-        <h4>0.1.0</h4>
-        <ul>
-            <li>Initial release.</li>
-            <li>Supports 14 volume file formats: NIfTI, NRRD, FreeSurfer, MetaImage, MRtrix, BrainVoyager, and NumPy.</li>
-            <li>Open supported files in an editor tab via double-click from the Project View.</li>
-            <li>Multiplanar 2×2 grid layout: axial, coronal, sagittal slices plus an interactive 3D render.</li>
-            <li>HiDPI-aware rendering on Retina and high-DPI displays.</li>
-            <li>Embedded Niivue 0.68.2 (WebGL2). Works in IntelliJ IDEA, PyCharm, WebStorm, CLion and other JetBrains IDEs.</li>
-        </ul>
-    ]]></change-notes>
+    <!-- change-notes are generated from CHANGELOG.md by the changelog Gradle
+         plugin (see build.gradle.kts, patchPluginXml's changeNotes provider).
+         Do not add a static block here — it would override the generated one. -->
 
     <depends>com.intellij.modules.platform</depends>
 

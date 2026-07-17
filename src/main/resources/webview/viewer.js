@@ -10,8 +10,14 @@
  *   pickFile: () => Promise<{url, name, sizeMB} | null>
  *     Source of "pick another volume file" (used by Overlay > Add). The
  *     plugin omits it and the default implementation asks the IDE through
- *     the window.niivuePickFile bridge (see NiivueFileEditor); the bench
+ *     the window.niivueHostRequest bridge (see NiivueFileEditor); the bench
  *     passes an <input type=file> based picker.
+ *   pickFiles: () => Promise<[{url, name, sizeMB}] | null>
+ *     Source of "Add Image > File(s)" — multiple volumes, each opening on
+ *     its own canvas tile. Same bridge/fallback split as pickFile.
+ *   pickDcmFolder: () => Promise<[{url, name}] | null>
+ *     Source of "Add Image > DICOM folder" — every DICOM slice of the
+ *     picked folder; the page converts them to NIfTI via dcm2niix.
  */
 window.NiivueViewer = (function () {
     'use strict';
@@ -38,10 +44,25 @@ window.NiivueViewer = (function () {
         [0, 0, -90],
     ];
 
+    const EXAMPLE_IMAGE_URL = 'https://niivue.github.io/niivue-demo-images/mni152.nii.gz';
+    const TILE_GAP = 4;
+
+    /**
+     * Canvas tiles, one Niivue instance each — the "Add Image" grid.
+     * `nv` always aliases the ACTIVE tile's instance so the per-volume
+     * menus (ColorScale/Overlay/Header/Navigation) read naturally; view-wide
+     * operations iterate all tiles via eachView(). Tile 0 wraps the host
+     * page's original #gl canvas, so a single volume renders exactly as it
+     * did before tiles existed.
+     */
+    let views = [];
+    let activeIndex = 0;
     let nv = null;
-    let canvas, meta, status, loc, toolbar;
+    let tilesEl = null;
+    let viewport = null;
+    let meta, status, loc, toolbar;
     let config = {};
-    let pendingPick = null;
+    let pendingPicks = {};
     let openPanel = null;
 
     const state = {
@@ -70,7 +91,25 @@ window.NiivueViewer = (function () {
             padding: 2px 6px; user-select: none; z-index: 20;
         }
         #viewport { flex: 1; position: relative; min-height: 0; }
-        #gl { display: block; width: 100%; height: 100%; }
+        #tiles {
+            position: absolute; inset: 0; overflow: hidden;
+            display: flex; flex-wrap: wrap; gap: ${TILE_GAP}px;
+            align-content: flex-start;
+        }
+        .tile { position: relative; flex: none; }
+        .tile canvas { display: block; width: 100%; height: 100%; }
+        .tile-label {
+            position: absolute; top: 3px; right: 5px; z-index: 6;
+            display: none; align-items: center; gap: 5px;
+            color: #bbb; text-shadow: 0 0 4px #000;
+        }
+        .tile-close {
+            background: none; border: none; color: #999; font: inherit;
+            cursor: pointer; padding: 0 3px; border-radius: 3px;
+        }
+        .tile-close:hover { background: #444; color: #fff; }
+        #tiles.multi .tile-label { display: flex; }
+        #tiles.multi .tile.active { outline: 1px solid #2d4a6b; outline-offset: -1px; }
         #meta, #status, #loc {
             position: absolute; left: 12px;
             pointer-events: none; text-shadow: 0 0 4px #000; z-index: 5;
@@ -159,6 +198,179 @@ window.NiivueViewer = (function () {
     }
 
     /* ------------------------------------------------------------------ */
+    /* Canvas tiles (Add Image grid)                                       */
+    /* ------------------------------------------------------------------ */
+
+    function eachView(fn) {
+        views.forEach(function (v) { fn(v.nv); });
+    }
+
+    function setActive(index) {
+        if (!views[index]) return;
+        activeIndex = index;
+        nv = views[index].nv;
+        window.nv = nv;
+        views.forEach(function (v, i) {
+            v.tile.classList.toggle('active', i === activeIndex);
+        });
+        // Move the metadata readout into the active tile: it describes that
+        // tile's volume, so in a grid it has to sit on it. Tiles are
+        // position:relative, so #meta's absolute offsets carry over — with
+        // one tile the result is pixel-identical to the old viewport-level
+        // placement.
+        views[index].tile.appendChild(meta);
+        showMetadata();
+    }
+
+    /**
+     * Splits the viewport into a rows x cols grid that maximizes the
+     * smaller tile dimension (the balanced-grid criterion). One tile fills
+     * the viewport exactly, preserving the pre-tiles layout.
+     */
+    function layoutTiles() {
+        const n = views.length;
+        if (n === 0) return;
+        tilesEl.classList.toggle('multi', n > 1);
+        const W = tilesEl.clientWidth;
+        const H = tilesEl.clientHeight;
+        let best = null;
+        for (let rows = 1; rows <= n; rows++) {
+            const cols = Math.ceil(n / rows);
+            // Clamp: while the viewport is still unmeasured (0x0), the raw
+            // result would be negative, which is not a valid CSS length and
+            // would leave tiles at their previous size.
+            const w = Math.max(1, Math.floor((W - (cols - 1) * TILE_GAP) / cols));
+            const h = Math.max(1, Math.floor((H - (rows - 1) * TILE_GAP) / rows));
+            const score = Math.min(w, h);
+            if (!best || score > best.score) best = { w: w, h: h, score: score };
+        }
+        views.forEach(function (v) {
+            v.tile.style.width = best.w + 'px';
+            v.tile.style.height = best.h + 'px';
+        });
+    }
+
+    /**
+     * Crosshair/pan/3D sync across every loaded tile, like niivue-vscode's
+     * syncVolumes. Rewired after every add/load/remove because broadcastTo
+     * replaces the target list wholesale. This covers mouse interaction
+     * only: niivue calls sync() from its own mouse handlers, and only for
+     * the focused canvas.
+     */
+    function wireSync() {
+        views.forEach(function (v) {
+            v.nv.broadcastTo(
+                views
+                    .filter(function (o) { return o !== v && o.nv.volumes.length > 0; })
+                    .map(function (o) { return o.nv; })
+            );
+        });
+    }
+
+    /**
+     * Pushes the active tile's crosshair/pan to the others and redraws.
+     * Needed for every non-mouse move (toolbar entries, H/J/K/L): those go
+     * through moveCrosshairInVox, which niivue does not sync from. Uses
+     * doSync2d so the position travels in mm — tiles with different voxel
+     * geometry stay on the same anatomical point, which stepping each tile
+     * by one of its own voxels would not achieve.
+     */
+    function syncFromActive() {
+        views.forEach(function (v) {
+            if (v.nv !== nv && v.nv.volumes.length > 0) {
+                nv.doSync2d(v.nv);
+                v.nv.drawScene();
+            }
+        });
+    }
+
+    function createNiivueInstance() {
+        const inst = new niivue.Niivue({
+            isResizeCanvas: true,
+            isHighResolutionCapable: true,
+            show3Dcrosshair: true,
+            isOrientCube: true,
+            logLevel: 'warn',
+            multiplanarLayout: niivue.MULTIPLANAR_TYPE.GRID,
+            multiplanarForceRender: true,
+            // Disable niivue's built-in view/clip hotkeys; the toolbar owns
+            // them (see installKeyboardShortcuts). The hard-coded H/J/K/L
+            // crosshair keys aren't options, so they're additionally blocked
+            // by intercepting keydown/keyup in the capture phase.
+            viewModeHotKey: '',
+            clipPlaneHotKey: '',
+            cycleClipPlaneHotKey: '',
+        });
+        return inst;
+    }
+
+    /**
+     * Appends a canvas tile with its own Niivue instance. Tile 0 adopts the
+     * host page's #gl canvas ([existingCanvas]); later tiles create theirs.
+     */
+    function createTile(existingCanvas) {
+        const tile = el('div', 'tile');
+        const canvasEl = existingCanvas || el('canvas');
+        tile.appendChild(canvasEl);
+        const label = el('div', 'tile-label');
+        const name = el('span', 'tile-name', '');
+        label.appendChild(name);
+        const close = el('button', 'tile-close', '✕');
+        close.title = 'Remove this image';
+        label.appendChild(close);
+        tile.appendChild(label);
+        tilesEl.appendChild(tile);
+
+        const inst = createNiivueInstance();
+        inst.attachToCanvas(canvasEl);
+        const view = { nv: inst, canvas: canvasEl, tile: tile, nameEl: name };
+        views.push(view);
+
+        // Activate on any interaction with the tile (capture phase: the
+        // canvas swallows mouse events for its own drag handling).
+        tile.addEventListener('mousedown', function () {
+            setActive(views.indexOf(view));
+        }, true);
+        close.addEventListener('click', function (e) {
+            e.stopPropagation();
+            removeTile(view);
+        });
+
+        installLocationReadoutFor(inst);
+        new ResizeObserver(function () { inst.resizeListener(); }).observe(canvasEl);
+        layoutTiles();
+        return view;
+    }
+
+    function removeTile(view) {
+        if (views.length <= 1) return; // the last tile stays (base viewer)
+        const index = views.indexOf(view);
+        if (index < 0) return;
+        views.splice(index, 1);
+        view.tile.remove();
+        // Free the WebGL context right away instead of waiting for GC —
+        // Chromium caps live contexts per page, and each tile holds one.
+        const ext = view.nv.gl && view.nv.gl.getExtension('WEBGL_lose_context');
+        if (ext) ext.loseContext();
+        setActive(Math.min(index, views.length - 1));
+        wireSync();
+        layoutTiles();
+    }
+
+    /**
+     * The tile a new image should load into: the first still-empty tile if
+     * any (e.g. tile 0 in the bench before a base volume is picked),
+     * otherwise a fresh one — mirroring niivue-vscode's "uninitialized
+     * instance first" rule.
+     */
+    function targetViewForNewImage() {
+        for (let i = 0; i < views.length; i++) {
+            if (views[i].nv.volumes.length === 0) return views[i];
+        }
+        return createTile();
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Menu framework                                                      */
     /* ------------------------------------------------------------------ */
 
@@ -232,8 +444,10 @@ window.NiivueViewer = (function () {
     /* View menu                                                           */
     /* ------------------------------------------------------------------ */
 
+    // View-wide operations apply to every tile, like niivue-vscode's global
+    // sliceType/setting signals; per-volume menus act on the active tile only.
     function setSliceType(type) {
-        nv.setSliceType(type);
+        eachView(function (inst) { inst.setSliceType(type); });
     }
 
     // The five view modes cycled by "Cycle view mode" / the `v` shortcut, in
@@ -254,28 +468,36 @@ window.NiivueViewer = (function () {
     let viewDefaults = null;
 
     function resetView() {
-        nv.scene.pan2Dxyzmm = [0, 0, 0, 1];
-        nv.scene.volScaleMultiplier = 1;
-        if (viewDefaults) {
-            nv.scene.renderAzimuth = viewDefaults.azimuth;
-            nv.scene.renderElevation = viewDefaults.elevation;
-        }
-        nv.drawScene();
+        eachView(function (inst) {
+            inst.scene.pan2Dxyzmm = [0, 0, 0, 1];
+            inst.scene.volScaleMultiplier = 1;
+            if (viewDefaults) {
+                inst.scene.renderAzimuth = viewDefaults.azimuth;
+                inst.scene.renderElevation = viewDefaults.elevation;
+            }
+            inst.drawScene();
+        });
     }
 
     function cycleClipPlane() {
         state.clipIndex = (state.clipIndex + 1) % CLIP_PLANES.length;
-        nv.setClipPlane(CLIP_PLANES[state.clipIndex].slice());
+        eachView(function (inst) {
+            inst.setClipPlane(CLIP_PLANES[state.clipIndex].slice());
+        });
+    }
+
+    function applyTogglesTo(inst) {
+        inst.setInterpolation(!state.smooth);
+        inst.opts.isColorbar = state.colorbar;
+        inst.setRadiologicalConvention(state.radiological);
+        inst.setCrosshairWidth(state.crosshair ? 1 : 0);
+        inst.opts.show3Dcrosshair = state.crosshair;
+        inst.updateGLVolume();
+        inst.drawScene();
     }
 
     function applyToggles() {
-        nv.setInterpolation(!state.smooth);
-        nv.opts.isColorbar = state.colorbar;
-        nv.setRadiologicalConvention(state.radiological);
-        nv.setCrosshairWidth(state.crosshair ? 1 : 0);
-        nv.opts.show3Dcrosshair = state.crosshair;
-        nv.updateGLVolume();
-        nv.drawScene();
+        eachView(applyTogglesTo);
     }
 
     function renderViewMenu(panel) {
@@ -329,8 +551,10 @@ window.NiivueViewer = (function () {
         // In pan mode niivue pans on drag and zooms 2D slices on scroll
         // (wheel-zoom keys off opts.dragMode, drag off dragModePrimary),
         // so both are switched together.
-        nv.opts.dragMode = on ? DRAG.pan : DRAG.contrast;
-        nv.opts.dragModePrimary = on ? DRAG.pan : DRAG.crosshair;
+        eachView(function (inst) {
+            inst.opts.dragMode = on ? DRAG.pan : DRAG.contrast;
+            inst.opts.dragModePrimary = on ? DRAG.pan : DRAG.crosshair;
+        });
         zoomBtn.classList.toggle('active', on);
     }
 
@@ -461,23 +685,53 @@ window.NiivueViewer = (function () {
     /* Overlay menu                                                        */
     /* ------------------------------------------------------------------ */
 
-    function pickFile() {
-        if (config.pickFile) return config.pickFile();
+    /**
+     * Asks the IDE for a native chooser via window.niivueHostRequest(action)
+     * and resolves when the matching niivueViewerOn*Picked callback fires.
+     * One pending request per action; a second click while the chooser is
+     * open resolves null immediately.
+     */
+    function hostRequest(action) {
         return new Promise(function (resolve) {
-            if (typeof window.niivuePickFile !== 'function' || pendingPick) {
+            if (typeof window.niivueHostRequest !== 'function' || pendingPicks[action]) {
                 resolve(null);
                 return;
             }
-            pendingPick = resolve;
-            window.niivuePickFile();
+            pendingPicks[action] = resolve;
+            window.niivueHostRequest(action);
         });
     }
 
-    /** IDE-side file chooser reports back through this global. */
+    function resolvePick(action, value) {
+        const resolve = pendingPicks[action];
+        pendingPicks[action] = null;
+        if (resolve) resolve(value);
+    }
+
+    function pickFile() {
+        if (config.pickFile) return config.pickFile();
+        return hostRequest('pickOverlay');
+    }
+
+    function pickFiles() {
+        if (config.pickFiles) return config.pickFiles();
+        return hostRequest('pickFiles');
+    }
+
+    function pickDcmFolder() {
+        if (config.pickDcmFolder) return config.pickDcmFolder();
+        return hostRequest('pickDcmFolder');
+    }
+
+    /** IDE-side choosers report back through these globals. */
     window.niivueViewerOnFilePicked = function (url, name, sizeMB) {
-        const resolve = pendingPick;
-        pendingPick = null;
-        if (resolve) resolve(url ? { url: url, name: name, sizeMB: sizeMB || 0 } : null);
+        resolvePick('pickOverlay', url ? { url: url, name: name, sizeMB: sizeMB || 0 } : null);
+    };
+    window.niivueViewerOnFilesPicked = function (files) {
+        resolvePick('pickFiles', files && files.length ? files : null);
+    };
+    window.niivueViewerOnDcmFolderPicked = function (files) {
+        resolvePick('pickDcmFolder', files && files.length ? files : null);
     };
 
     async function addOverlayFromUrl(url, name, sizeMB) {
@@ -524,6 +778,145 @@ window.NiivueViewer = (function () {
             panel.appendChild(el('div', 'tb-note',
                 (nv.volumes.length - 1) + ' overlay(s) — adjust via ColorScale'));
         }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Add Image menu                                                      */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Loads one volume into [view], replacing whatever it shows. Source is
+     * either a fetchable same-origin/allow-listed URL or an in-memory
+     * buffer (DICOM conversion output). Newly loaded tiles inherit the
+     * current toolbar state (toggles, drag mode, view mode of the active
+     * tile) so the grid stays coherent.
+     */
+    async function loadIntoView(view, source) {
+        setStatus('Loading ' + source.name +
+            (source.sizeMB >= 200 ? ' (' + source.sizeMB + ' MB, this may take a moment)...' : '...'));
+        let buf = source.buffer;
+        if (!buf) {
+            const resp = await fetch(source.url);
+            if (!resp.ok) throw new Error('fetch failed: HTTP ' + resp.status);
+            buf = await resp.arrayBuffer();
+        }
+        const sliceType = nv && nv.volumes.length > 0 ? nv.opts.sliceType : null;
+        while (view.nv.volumes.length > 0) view.nv.removeVolume(view.nv.volumes[0]);
+        await view.nv.loadFromArrayBuffer(buf, source.name);
+        view.nameEl.textContent = source.name;
+        applyTogglesTo(view.nv);
+        view.nv.opts.dragMode = state.zoomMode ? DRAG.pan : DRAG.contrast;
+        view.nv.opts.dragModePrimary = state.zoomMode ? DRAG.pan : DRAG.crosshair;
+        if (sliceType !== null && view.nv !== nv) view.nv.setSliceType(sliceType);
+        wireSync();
+        setStatus('');
+    }
+
+    /** Adds one image on its own tile; removes the tile again on failure. */
+    async function addImageTile(source) {
+        const view = targetViewForNewImage();
+        try {
+            await loadIntoView(view, source);
+            setActive(views.indexOf(view));
+        } catch (err) {
+            if (view.nv.volumes.length === 0) removeTile(view);
+            setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+            console.error('[Niivue] add image failed:', err);
+        }
+    }
+
+    async function addImageFiles() {
+        const picked = await pickFiles();
+        if (!picked) return;
+        for (const item of picked) {
+            await addImageTile(item);
+        }
+    }
+
+    async function addExampleImage() {
+        await addImageTile({ url: EXAMPLE_IMAGE_URL, name: 'mni152.nii.gz', sizeMB: 4 });
+    }
+
+    /**
+     * Converts a DICOM series to NIfTI with the bundled dcm2niix WASM
+     * build, mirroring @niivue/dicom-loader: files into /input, callMain,
+     * NIfTI files out of /output. dcm2niix groups slices itself, so a folder
+     * holding several acquisitions yields one file per series.
+     *
+     * Runs on the main thread (upstream uses a worker): a module worker
+     * would have to be assembled from inlined sources to survive JCEF's
+     * request routing, and dcm2niix converts a typical series fast enough
+     * that blocking the page briefly is the smaller cost. A fresh module
+     * instance per conversion keeps the WASM filesystem clean.
+     */
+    async function convertDicomSeries(files) {
+        // Resolved against this module's own URL (import() in a classic
+        // script uses the script as referrer), and dcm2niix.js ships next
+        // to viewer.js in both hosts — plugin resources and repo alike.
+        const factory = (await import('./dcm2niix.js')).default;
+        const mod = await factory({ print: function () {}, printErr: function () {} });
+        mod.FS.mkdir('/input');
+        mod.FS.mkdir('/output');
+        files.forEach(function (f) {
+            // Flatten path separators and normalize the Siemens .ima
+            // extension, like niivue-vscode's loaders do.
+            const name = f.name.split('/').join('_').replace(/\.ima$/i, '.dcm');
+            mod.FS.createDataFile('/input', name, new Uint8Array(f.buffer), true, true);
+        });
+        const exitCode = mod.callMain(['-o', '/output', '/input']);
+        if (exitCode !== 0 && exitCode !== 3) {
+            throw new Error('dcm2niix failed with exit code ' + exitCode);
+        }
+        return mod.FS.readdir('/output')
+            .filter(function (n) { return n.endsWith('.nii') || n.endsWith('.nii.gz'); })
+            .map(function (n) {
+                const data = mod.FS.readFile('/output/' + n); // Uint8Array
+                return { name: n, buffer: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) };
+            });
+    }
+
+    /**
+     * The full DICOM pipeline behind "Add Image > DICOM folder", minus the
+     * picking: fetch any URL-only items, convert with dcm2niix, and open
+     * each resulting series on its own tile. Items are {name, buffer} or
+     * {name, url}. Also exported for the bench/e2e harness, which cannot
+     * automate a native folder chooser.
+     */
+    async function loadDicomFiles(items) {
+        try {
+            setStatus('Loading DICOM series (' + items.length + ' files)...');
+            const files = await Promise.all(items.map(async function (item) {
+                if (item.buffer) return item;
+                const resp = await fetch(item.url);
+                if (!resp.ok) throw new Error('fetch failed: HTTP ' + resp.status);
+                return { name: item.name, buffer: await resp.arrayBuffer() };
+            }));
+            setStatus('Converting DICOM series (dcm2niix)...');
+            // Let the status text paint before callMain blocks the thread.
+            await new Promise(function (r) { setTimeout(r, 30); });
+            const converted = await convertDicomSeries(files);
+            if (converted.length === 0) {
+                throw new Error('no NIfTI volume came out of the DICOM conversion');
+            }
+            for (const series of converted) {
+                await addImageTile(series);
+            }
+        } catch (err) {
+            setStatus('DICOM error: ' + (err && err.message ? err.message : String(err)));
+            console.error('[Niivue] DICOM load failed:', err);
+        }
+    }
+
+    async function addDcmFolder() {
+        const picked = await pickDcmFolder();
+        if (!picked) return;
+        await loadDicomFiles(picked);
+    }
+
+    function renderAddImageMenu(panel) {
+        addItem(panel, 'File(s)…', addImageFiles);
+        addItem(panel, 'DICOM folder…', addDcmFolder);
+        addItem(panel, 'Example image (MNI152)', addExampleImage);
     }
 
     /* ------------------------------------------------------------------ */
@@ -590,6 +983,7 @@ window.NiivueViewer = (function () {
     function moveCrosshair(x, y, z) {
         nv.moveCrosshairInVox(x, y, z);
         nv.drawScene();
+        syncFromActive();
     }
 
     function frame4DCount() {
@@ -634,6 +1028,7 @@ window.NiivueViewer = (function () {
 
     function buildToolbar() {
         [
+            ['Add Image', renderAddImageMenu],
             ['View', renderViewMenu],
             null, // Zoom toggle goes here
             ['ColorScale', renderColorScaleMenu],
@@ -796,8 +1191,9 @@ window.NiivueViewer = (function () {
     // Crosshair readout (bottom left): mm coordinates and voxel intensity,
     // formatted like the niivue-vscode footer. Niivue's own `string` is only
     // the fallback since it appends the 4D frame index even for 3D volumes.
-    function installLocationReadout() {
-        nv.onLocationChange = function (data) {
+    // Installed per tile; whichever tile the pointer is over writes last.
+    function installLocationReadoutFor(inst) {
+        inst.onLocationChange = function (data) {
             if (!data) { loc.textContent = ''; return; }
             if (data.mm && data.values && data.values.length) {
                 const p = function (n) { return String(Math.round(n * 10) / 10); };
@@ -856,8 +1252,16 @@ window.NiivueViewer = (function () {
         window.niivueWheel = function (delta, x, y) {
             if (typeof delta !== 'number' || delta === 0 || !isFinite(delta)) return;
             if (openPanel) return; // scrolling while a dropdown is open stays in the menu
-            const r = canvas.getBoundingClientRect();
-            if (x < r.left || x >= r.right || y < r.top || y >= r.bottom) return;
+            // Route the gesture to the tile under the cursor.
+            let target = null;
+            for (let i = 0; i < views.length; i++) {
+                const r = views[i].canvas.getBoundingClientRect();
+                if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) {
+                    target = views[i].canvas;
+                    break;
+                }
+            }
+            if (!target) return;
             const mag = Math.abs(delta);
             const now = performance.now();
 
@@ -891,7 +1295,7 @@ window.NiivueViewer = (function () {
                     && ratio >= CONSISTENCY
                     && dirOk) {
                 const t0 = performance.now();
-                canvas.dispatchEvent(new WheelEvent('wheel', {
+                target.dispatchEvent(new WheelEvent('wheel', {
                     clientX: x,
                     clientY: y,
                     deltaY: dir * 100,
@@ -923,19 +1327,13 @@ window.NiivueViewer = (function () {
     // The URL points at the per-editor volume resource served by the
     // IDE-side request handler (same origin as this page); the fetch
     // streams the bytes straight from disk through Chromium. Loading a
-    // base volume replaces everything currently shown (relevant for the
-    // bench, where a new base can be chosen repeatedly).
+    // base volume replaces what tile 0 currently shows (relevant for the
+    // bench, where a new base can be chosen repeatedly); tiles added via
+    // Add Image are untouched.
     window.loadNiivueVolume = async function (url, name, sizeMB) {
         try {
-            setStatus('Loading ' + name +
-                (sizeMB >= 200 ? ' (' + sizeMB + ' MB, this may take a moment)...' : '...'));
-            const resp = await fetch(url);
-            if (!resp.ok) throw new Error('fetch failed: HTTP ' + resp.status);
-            const buf = await resp.arrayBuffer();
-            while (nv.volumes.length > 0) nv.removeVolume(nv.volumes[0]);
-            await nv.loadFromArrayBuffer(buf, name);
-            setStatus('');
-            showMetadata();
+            await loadIntoView(views[0], { url: url, name: name, sizeMB: sizeMB });
+            setActive(0);
         } catch (err) {
             setStatus('Error: ' + (err && err.message ? err.message : String(err)));
             console.error('[Niivue] load failed:', err);
@@ -948,44 +1346,33 @@ window.NiivueViewer = (function () {
 
     function init(options) {
         config = options || {};
-        canvas = document.getElementById('gl');
+        const gl = document.getElementById('gl');
         meta = document.getElementById('meta');
         status = document.getElementById('status');
         loc = document.getElementById('loc');
         toolbar = document.getElementById('toolbar');
+        viewport = document.getElementById('viewport');
 
         injectStyles();
 
-        nv = new niivue.Niivue({
-            isResizeCanvas: true,
-            isHighResolutionCapable: true,
-            show3Dcrosshair: true,
-            isOrientCube: true,
-            logLevel: 'warn',
-            multiplanarLayout: niivue.MULTIPLANAR_TYPE.GRID,
-            multiplanarForceRender: true,
-            // Disable niivue's built-in view/clip hotkeys; the toolbar owns
-            // them (see installKeyboardShortcuts). The hard-coded H/J/K/L
-            // crosshair keys aren't options, so they're additionally blocked
-            // by intercepting keydown/keyup in the capture phase.
-            viewModeHotKey: '',
-            clipPlaneHotKey: '',
-            cycleClipPlaneHotKey: '',
-        });
-        window.nv = nv;
-        nv.attachToCanvas(canvas);
+        // Tile 0 adopts the host page's #gl canvas; Add Image appends more
+        // tiles next to it (see the "Canvas tiles" section).
+        tilesEl = el('div');
+        tilesEl.id = 'tiles';
+        viewport.insertBefore(tilesEl, viewport.firstChild);
+        const first = createTile(gl);
+        setActive(0);
 
         viewDefaults = {
-            azimuth: nv.scene.renderAzimuth,
-            elevation: nv.scene.renderElevation,
+            azimuth: first.nv.scene.renderAzimuth,
+            elevation: first.nv.scene.renderElevation,
         };
 
-        installLocationReadout();
         installWheelBridge();
         buildToolbar();
         installKeyboardShortcuts();
 
-        new ResizeObserver(function () { nv.resizeListener(); }).observe(canvas);
+        new ResizeObserver(layoutTiles).observe(tilesEl);
 
         setStatus('');
         return nv;
@@ -996,6 +1383,8 @@ window.NiivueViewer = (function () {
         addOverlayFromUrl: function (url, name, sizeMB) {
             return addOverlayFromUrl(url, name, sizeMB || 0);
         },
+        addImage: function (source) { return addImageTile(source); },
+        loadDicomFiles: function (items) { return loadDicomFiles(items); },
         showMetadata: function () { showMetadata(); },
     };
 })();

@@ -22,8 +22,8 @@
       plugin ships, so what you see here is what the JetBrains editor renders.
       Open this file directly (file://) — no server needed. Pick a base volume
       to load it, then exercise the toolbar (View / Zoom / ColorScale /
-      Overlay / Header / Navigation). Test data lives in the sibling repo
-      ../../niivue-jetbrains-test-data/. See README.md for the checklist.
+      Overlay / Header / Navigation). Bring your own volume files to load.
+      See README.md for the checklist.
     -->
     <div id="bench">
         <label>Base volume: <input type="file" id="baseInput"></label>
@@ -61,7 +61,55 @@
             });
         }
 
-        NiivueViewer.init({ pickFile: pickViaInput });
+        // Add Image > File(s): same trick, multi-select.
+        function pickFilesViaInput() {
+            return new Promise(function (resolve) {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.multiple = true;
+                input.addEventListener('change', function () {
+                    const files = Array.from(input.files || []);
+                    if (files.length === 0) { resolve(null); return; }
+                    resolve(files.map(function (f) {
+                        return {
+                            url: URL.createObjectURL(f),
+                            name: f.name,
+                            sizeMB: Math.round(f.size / (1024 * 1024)),
+                        };
+                    }));
+                });
+                input.click();
+            });
+        }
+
+        // Add Image > DICOM folder: a directory input; buffers are read
+        // here directly, no object URLs needed. NOTE: the dcm2niix WASM
+        // module is loaded via dynamic import(), which browsers block on
+        // file:// — serve the repo root over HTTP to test DICOM
+        // (python3 -m http.server, then open /tests/bench.html).
+        function pickDcmFolderViaInput() {
+            return new Promise(function (resolve) {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.webkitdirectory = true;
+                input.addEventListener('change', function () {
+                    const files = Array.from(input.files || []);
+                    if (files.length === 0) { resolve(null); return; }
+                    Promise.all(files.map(function (f) {
+                        return f.arrayBuffer().then(function (buf) {
+                            return { name: f.name, buffer: buf };
+                        });
+                    })).then(resolve);
+                });
+                input.click();
+            });
+        }
+
+        NiivueViewer.init({
+            pickFile: pickViaInput,
+            pickFiles: pickFilesViaInput,
+            pickDcmFolder: pickDcmFolderViaInput,
+        });
 
         document.getElementById('baseInput').addEventListener('change', function (e) {
             const f = e.target.files && e.target.files[0];

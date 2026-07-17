@@ -1,3 +1,4 @@
+import org.jetbrains.changelog.Changelog
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel
 
@@ -18,6 +19,24 @@ dependencies {
 }
 
 intellijPlatform {
+    pluginConfiguration {
+        // Marketplace change notes, rendered from CHANGELOG.md. During
+        // development the [Unreleased] section is used; in the Release
+        // workflow patchChangelog runs before publishPlugin, so the freshly
+        // stamped [x.y.z] section exists by the time this provider is read.
+        changeNotes = provider {
+            val version = project.version.toString()
+            with(changelog) {
+                renderItem(
+                    (getOrNull(version) ?: getUnreleased())
+                        .withHeader(false)
+                        .withEmptySections(false),
+                    Changelog.OutputType.HTML,
+                )
+            }
+        }
+    }
+
     // Wired to the secrets the Release workflow passes as environment
     // variables (see .github/workflows/release.yml). All are lazy providers,
     // so local builds without these variables are unaffected.

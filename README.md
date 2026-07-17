@@ -15,6 +15,7 @@ Double-click a supported file in the Project View. It opens in an editor tab sho
 
 A toolbar across the top gives you:
 
+- **Add Image** — open more images next to the current one, each on its own canvas: individual **file(s)**, a **DICOM folder** (converted to NIfTI in the viewer), or the MNI152 **example image**. Crosshair, pan and rotation stay in sync across all canvases; close one with the ✕ on its label
 - **View** — switch between axial, sagittal, coronal, 3D render and multiplanar; cycle through the views; cycle the 3D clip plane; reset the view; toggle interpolation, colorbar, radiological convention and the crosshair
 - **Zoom** — switch the mouse drag between crosshair navigation and pan/zoom
 - **ColorScale** — colormap, min/max window, opacity and inversion, per volume or overlay
@@ -66,11 +67,27 @@ payloads, and no size limit beyond renderer memory. Niivue then handles format
 detection (NIfTI, NRRD, MGH, MetaImage, etc., plus gzip decompression) and
 WebGL2 rendering.
 
-The toolbar's **Overlay** action reuses the same transport. The page asks the
-IDE for a file through a `JBCefJSQuery` bridge; the Kotlin side opens the native
-IntelliJ file chooser, points a per-editor overlay URL at the chosen file, and
-the page fetches it back through the request handler — so overlays stream from
-disk with the same no-size-limit path as the base volume.
+The toolbar's **Overlay** and **Add Image** actions reuse the same transport.
+The page asks the IDE for files through a `JBCefJSQuery` bridge; the Kotlin
+side opens the native IntelliJ chooser, registers each picked file under its
+own URL, and the page fetches them back through the request handler — so every
+added image streams from disk with the same no-size-limit path as the base
+volume. **Add Image > Example image** is the one exception: that URL is fetched
+from the Niivue demo-image host, which the request handler lets through
+explicitly.
+
+**Add Image > DICOM folder** scans the picked directory for DICOM slices (name
+pre-filter, then a `DICM` magic-byte check) and hands the series to the page,
+which converts it to NIfTI with the bundled
+[dcm2niix](https://github.com/rordenlab/dcm2niix) WASM build before handing the
+result to Niivue. dcm2niix groups the slices itself, so a folder holding
+several acquisitions opens one canvas per series.
+
+Each added image gets its own canvas and Niivue instance in a grid that
+rebalances as images come and go. Crosshair, pan and 3D rotation are
+synchronized across canvases via Niivue's `broadcastTo`, with the same
+synchronization applied explicitly for keyboard and toolbar navigation (Niivue
+only syncs from its own mouse handlers).
 
 Scroll input deliberately bypasses JCEF, whose own wheel-event synthesis is
 unreliable for macOS trackpads: the browser runs in off-screen rendering mode
@@ -106,5 +123,10 @@ This plugin is open source. It bundles two assets from the [Niivue project](http
 - The Niivue brain logo (used as the plugin's Marketplace icon)
 
 The full BSD-2-Clause notice ships with the plugin at [src/main/resources/webview/NIIVUE_LICENSE.txt](src/main/resources/webview/NIIVUE_LICENSE.txt) and covers both assets.
+
+It also bundles the WASM build of [dcm2niix](https://github.com/rordenlab/dcm2niix)
+(© Chris Rorden, BSD-2-Clause) via the [@niivue/dcm2niix](https://www.npmjs.com/package/@niivue/dcm2niix)
+package, used to convert DICOM folders to NIfTI. Its notice ships at
+[src/main/resources/webview/DCM2NIIX_LICENSE.txt](src/main/resources/webview/DCM2NIIX_LICENSE.txt).
 
 This plugin is a community project and is **not officially affiliated with, endorsed by, or sponsored by the Niivue project**.

@@ -19,7 +19,6 @@ import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
-import com.intellij.ui.jcef.utils.JBCefLocalRequestHandler
 import com.intellij.ui.jcef.utils.JBCefStreamResourceHandler
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
@@ -44,11 +43,36 @@ private const val VIEWER_AUTHORITY = "localhost"
 private const val VIEWER_ORIGIN = "$VIEWER_PROTOCOL://$VIEWER_AUTHORITY"
 
 /**
- * Fixed resource path for the overlay volume picked via the toolbar. The
- * file behind it changes per pick (see [NiivueFileEditor.overlayFile]); the
- * page cache-busts each fetch with a query string.
+ * File-name pre-filter for DICOM slices, mirroring niivue-vscode: matches
+ * `.dcm`/`.ima`, extension-less names (`IM_0001`), and UID-style names made
+ * of digits and dots. Content is still verified via [hasDicomMagic] before a
+ * file is treated as DICOM.
  */
-private const val OVERLAY_PATH = "overlay-volume"
+private val DICOM_UID_NAME = Regex("^[\\d.]+$")
+
+private fun isDicomCandidateName(name: String): Boolean {
+    val base = name.substringAfterLast('/').lowercase()
+    if (base.endsWith(".dcm") || base.endsWith(".ima")) return true
+    return !base.contains('.') || DICOM_UID_NAME.matches(base)
+}
+
+/** DICOM Part 10 magic: the bytes "DICM" at offset 128. */
+private fun hasDicomMagic(file: VirtualFile): Boolean = try {
+    file.inputStream.use { stream ->
+        val preamble = ByteArray(132)
+        var read = 0
+        while (read < preamble.size) {
+            val n = stream.read(preamble, read, preamble.size - read)
+            if (n < 0) break
+            read += n
+        }
+        read == preamble.size &&
+            preamble[128] == 'D'.code.toByte() && preamble[129] == 'I'.code.toByte() &&
+            preamble[130] == 'C'.code.toByte() && preamble[131] == 'M'.code.toByte()
+    }
+} catch (e: Exception) {
+    false
+}
 
 /**
  * Editor tab that renders NIfTI and related medical-imaging volume files via
@@ -85,23 +109,21 @@ class NiivueFileEditor(
     private val firstLoadHandled = AtomicBoolean(false)
 
     /**
-     * JS-to-IDE bridge behind the toolbar's "Overlay > Add" entry. Created
-     * before [JBCefBrowser.loadURL] because JCEF only allows new queries
-     * while the native browser is not yet spawned.
+     * JS-to-IDE bridge behind the toolbar's file-picking entries (Overlay >
+     * Add, Add Image > File(s) / DICOM Folder). Created before
+     * [JBCefBrowser.loadURL] because JCEF only allows new queries while the
+     * native browser is not yet spawned. The request string selects the
+     * action; results return through `window.niivueViewerOn*Picked`.
      */
-    private val pickFileQuery: JBCefJSQuery? =
+    private val hostRequestQuery: JBCefJSQuery? =
         browser?.let { JBCefJSQuery.create(it as JBCefBrowserBase) }
 
     /**
-     * Volume the overlay resource path currently serves. Written on the EDT
-     * when the user picks a file, read on a CEF thread by the resource
-     * provider — volatile instead of mutating the request handler's
-     * (unsynchronized) resource map after browser start. The path is fixed
-     * and registered up front; each pick busts Chromium's cache with a
-     * `?v=<uuid>` query the handler ignores when matching.
+     * Serves every resource of the viewer page. Kept as a field because
+     * picked files are registered as new resource paths while the browser is
+     * running (the map is concurrent, see [NiivueLocalRequestHandler]).
      */
-    @Volatile
-    private var overlayFile: VirtualFile? = null
+    private var requestHandler: NiivueLocalRequestHandler? = null
 
     @Volatile
     private var disposed = false
@@ -113,7 +135,7 @@ class NiivueFileEditor(
             installRequestHandler(browser)
             installLoadHandler(browser)
             installWheelBridge(browser)
-            installPickFileHandler(browser)
+            installHostRequestHandler(browser)
             browser.loadURL("$VIEWER_ORIGIN/index.html")
         }
     }
@@ -179,13 +201,28 @@ class NiivueFileEditor(
      * to rejecting the request, which is the behavior we want anyway.
      */
     private fun installRequestHandler(b: JBCefBrowser) {
-        val handler = JBCefLocalRequestHandler(VIEWER_PROTOCOL, VIEWER_AUTHORITY)
+        val handler = NiivueLocalRequestHandler(VIEWER_PROTOCOL, VIEWER_AUTHORITY)
         handler.addResource("index.html") { classpathResourceHandler("/webview/index.html", "text/html") }
         handler.addResource("viewer.js") { classpathResourceHandler("/webview/viewer.js", "text/javascript") }
         handler.addResource("niivue.umd.js") { classpathResourceHandler("/webview/niivue.umd.js", "text/javascript") }
+        // dcm2niix WASM build, imported on demand by viewer.js to convert
+        // DICOM series to NIfTI in the page (Add Image > DICOM Folder).
+        handler.addResource("dcm2niix.js") { classpathResourceHandler("/webview/dcm2niix.js", "text/javascript") }
+        handler.addResource("dcm2niix.wasm") { classpathResourceHandler("/webview/dcm2niix.wasm", "application/wasm") }
         handler.addResource(volumePath) { volumeStreamHandler(file) }
-        handler.addResource(OVERLAY_PATH) { overlayFile?.let { volumeStreamHandler(it) } }
+        requestHandler = handler
         b.jbCefClient.addRequestHandler(handler, b.cefBrowser)
+    }
+
+    /**
+     * Registers [volume] under a fresh resource path and returns the URL the
+     * page can fetch it from. Each pick gets its own path, so no caching or
+     * cross-pick aliasing concerns arise.
+     */
+    private fun serveFile(volume: VirtualFile): String {
+        val path = "added-${UUID.randomUUID()}"
+        requestHandler?.addResource(path) { volumeStreamHandler(volume) }
+        return "$VIEWER_ORIGIN/$path"
     }
 
     private fun volumeStreamHandler(volume: VirtualFile): JBCefStreamResourceHandler? {
@@ -219,19 +256,25 @@ class NiivueFileEditor(
         }
 
     /**
-     * Wires the toolbar's "Overlay > Add" entry to the IDE's native file
-     * chooser. The page calls `window.niivuePickFile()` (installed in
+     * Wires the toolbar's file-picking entries to the IDE's native choosers.
+     * The page calls `window.niivueHostRequest(action)` (installed in
      * [scheduleVolumeLoad]); the query handler hops to the EDT, shows the
-     * chooser, points the fixed overlay resource at the picked file, and
-     * reports the result back via `window.niivueViewerOnFilePicked` — the
-     * page then fetches the bytes through the request handler like the main
-     * volume, so overlays get the same no-size-limit streaming path.
+     * matching chooser, registers the picked files as fresh resource paths,
+     * and reports URL + name back to the page — which then fetches the bytes
+     * through the request handler like the main volume, so every pick gets
+     * the same no-size-limit streaming path.
      */
-    private fun installPickFileHandler(b: JBCefBrowser) {
-        val query = pickFileQuery ?: return
+    private fun installHostRequestHandler(b: JBCefBrowser) {
+        val query = hostRequestQuery ?: return
         Disposer.register(this, query)
-        query.addHandler {
-            ApplicationManager.getApplication().invokeLater { chooseOverlayFile(b) }
+        query.addHandler { action ->
+            ApplicationManager.getApplication().invokeLater {
+                when (action) {
+                    "pickOverlay" -> chooseOverlayFile(b)
+                    "pickFiles" -> chooseAddFiles(b)
+                    "pickDcmFolder" -> chooseDcmFolder(b)
+                }
+            }
             null
         }
     }
@@ -247,12 +290,62 @@ class NiivueFileEditor(
             executeJs(b, "window.niivueViewerOnFilePicked(null, null, 0)")
             return
         }
-        overlayFile = chosen
         val sizeMB = chosen.length / (1024 * 1024)
-        // Fresh query per pick so Chromium cannot serve a previous overlay
-        // from cache; the request handler matches on the path alone.
-        val url = "$VIEWER_ORIGIN/$OVERLAY_PATH?v=${UUID.randomUUID()}"
-        executeJs(b, "window.niivueViewerOnFilePicked(\"$url\", ${jsString(chosen.name)}, $sizeMB)")
+        executeJs(b, "window.niivueViewerOnFilePicked(${jsString(serveFile(chosen))}, ${jsString(chosen.name)}, $sizeMB)")
+    }
+
+    /** Add Image > File(s): each picked volume opens on its own canvas. */
+    private fun chooseAddFiles(b: JBCefBrowser) {
+        if (disposed) return
+        val descriptor = FileChooserDescriptorFactory.multiFiles()
+            .withTitle("Add Images")
+            .withDescription("Each image opens on its own canvas next to the current one")
+            .withFileFilter { isSupportedVolumeFileName(it.name) }
+        val chosen = FileChooser.chooseFiles(descriptor, project, file.parent)
+        if (chosen.isEmpty() || disposed) {
+            executeJs(b, "window.niivueViewerOnFilesPicked(null)")
+            return
+        }
+        val json = chosen.joinToString(",", "[", "]") {
+            "{\"url\":${jsString(serveFile(it))},\"name\":${jsString(it.name)},\"sizeMB\":${it.length / (1024 * 1024)}}"
+        }
+        executeJs(b, "window.niivueViewerOnFilesPicked($json)")
+    }
+
+    /**
+     * Add Image > DICOM Folder: scans the picked directory for DICOM slices
+     * (name pre-filter, then `DICM` magic check — same strategy as
+     * niivue-vscode) and hands the whole series to the page, which converts
+     * it with dcm2niix. Falls back to every file in the folder when nothing
+     * passes the sniff (files without the Part 10 preamble). Scanning reads
+     * the head of every candidate, so it runs off the EDT.
+     */
+    private fun chooseDcmFolder(b: JBCefBrowser) {
+        if (disposed) return
+        val descriptor = FileChooserDescriptorFactory.singleDir()
+            .withTitle("Open DICOM Folder")
+            .withDescription("Load all DICOM slices in the folder as one series")
+        val folder = FileChooser.chooseFile(descriptor, project, file.parent)
+        if (folder == null || disposed) {
+            executeJs(b, "window.niivueViewerOnDcmFolderPicked(null)")
+            return
+        }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            if (disposed) return@executeOnPooledThread
+            val files = folder.children.filter { !it.isDirectory }
+            val dicom = files
+                .filter { isDicomCandidateName(it.name) && hasDicomMagic(it) }
+                .sortedBy { it.name }
+            val series = dicom.ifEmpty { files.sortedBy { it.name } }
+            if (series.isEmpty() || disposed) {
+                executeJs(b, "window.niivueViewerOnDcmFolderPicked(null)")
+                return@executeOnPooledThread
+            }
+            val json = series.joinToString(",", "[", "]") {
+                "{\"url\":${jsString(serveFile(it))},\"name\":${jsString(it.name)}}"
+            }
+            executeJs(b, "window.niivueViewerOnDcmFolderPicked($json)")
+        }
     }
 
     private fun installLoadHandler(b: JBCefBrowser) {
@@ -267,9 +360,10 @@ class NiivueFileEditor(
 
     private fun scheduleVolumeLoad(b: JBCefBrowser) {
         // Expose the file-pick bridge before the volume load so the toolbar
-        // is fully functional as soon as the image appears.
-        pickFileQuery?.let {
-            executeJs(b, "window.niivuePickFile = function() { ${it.inject("''")} };")
+        // is fully functional as soon as the image appears. The page passes
+        // the action name ("pickOverlay" / "pickFiles" / "pickDcmFolder").
+        hostRequestQuery?.let {
+            executeJs(b, "window.niivueHostRequest = function(action) { ${it.inject("action")} };")
         }
         val sizeMB = file.length / (1024 * 1024)
         // Only the fetch URL, name, and size cross the JS bridge; the page

@@ -3,6 +3,16 @@
 # niivue-jetbrains Changelog
 
 ## [Unreleased]
+### Added
+- **Add Image** menu: open further images next to the current one, each on its own canvas in a grid that rebalances as images come and go.
+  - **File(s)**: pick one or more volumes through the native IDE file picker; each opens on its own canvas and streams through the request handler with no size limit.
+  - **DICOM folder**: pick a folder and load its slices as one series. The slices are converted to NIfTI in the viewer by the bundled [dcm2niix](https://github.com/rordenlab/dcm2niix) WASM build; a folder holding several acquisitions yields one canvas per series.
+  - **Example image**: load the MNI152 demo volume from the Niivue demo images.
+- Crosshair, pan and 3D rotation are synchronized across all canvases; the active canvas is outlined and can be closed via the ✕ on its label.
+
+### Changed
+- The image metadata readout now sits on the active canvas instead of the viewport corner.
+- View, Zoom and clip-plane settings apply to every canvas; ColorScale, Overlay and Header act on the active one.
 
 ## [0.1.1]
 
