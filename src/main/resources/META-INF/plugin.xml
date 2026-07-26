@@ -17,6 +17,23 @@
 
     <depends>com.intellij.modules.platform</depends>
 
+    <!-- Up to 2026.1 the JCEF classes were part of the platform core, so every
+         plugin saw com.intellij.ui.jcef.* and org.cef.* for free. In 2026.2
+         (build 262) they moved into the bundled "Web Browser (JCEF)" plugin,
+         whose classes sit in content modules; a plugin that does not depend on
+         them dies with NoClassDefFoundError: com/intellij/ui/jcef/JBCefApp when
+         an editor is created. Both modules are needed: intellij.platform.ui.jcef
+         holds JBCefApp/JBCefBrowser/JBCefJSQuery, intellij.libraries.jcef holds
+         the org.cef.* handler classes. This is the same set the platform's own
+         JCEF-based plugins (Images, Markdown, Mermaid) declare.
+         The explicit sinceBuild in build.gradle.kts keeps this release on 262+
+         even when the development platform is upgraded later. -->
+    <dependencies>
+        <plugin id="com.intellij.modules.jcef"/>
+        <module name="intellij.libraries.jcef"/>
+        <module name="intellij.platform.ui.jcef"/>
+    </dependencies>
+
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="NIfTI"
                   implementationClass="com.github.felixstieglitz.niivuejetbrains.filetype.NiftiFileType"
