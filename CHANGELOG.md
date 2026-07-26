@@ -6,7 +6,10 @@
 ### Fixed
 - The viewer failed to open with `NoClassDefFoundError: com/intellij/ui/jcef/JBCefApp` on 2026.2. The embedded browser (JCEF) moved out of the platform core into a bundled plugin in that release, so the dependency on it is now declared explicitly. This build therefore requires 2026.2 or newer; for 2025.2–2026.1 use 0.1.2.
 
+## [0.1.2] - 2026-07-17
+
 ### Added
+
 - **Add Image** menu: open further images next to the current one, each on its own canvas in a grid that rebalances as images come and go.
   - **File(s)**: pick one or more volumes through the native IDE file picker; each opens on its own canvas and streams through the request handler with no size limit.
   - **DICOM folder**: pick a folder and load its slices as one series. The slices are converted to NIfTI in the viewer by the bundled [dcm2niix](https://github.com/rordenlab/dcm2niix) WASM build; a folder holding several acquisitions yields one canvas per series.
@@ -14,6 +17,7 @@
 - Crosshair, pan and 3D rotation are synchronized across all canvases; the active canvas is outlined and can be closed via the ✕ on its label.
 
 ### Changed
+
 - The image metadata readout now sits on the active canvas instead of the viewport corner.
 - View, Zoom and clip-plane settings apply to every canvas; ColorScale, Overlay and Header act on the active one.
 
@@ -50,6 +54,7 @@
 - HiDPI-aware rendering on Retina/HiDPI displays.
 - JCEF availability fallback: shows an explanatory message instead of crashing on IDE installations without embedded Chromium.
 
-[Unreleased]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/felixstieglitz/niivue-jetbrains/commits/v0.1.0
