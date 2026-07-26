@@ -3,7 +3,11 @@
 # niivue-jetbrains Changelog
 
 ## [Unreleased]
+
+## [0.1.3] - 2026-07-26
+
 ### Fixed
+
 - The viewer failed to open with `NoClassDefFoundError: com/intellij/ui/jcef/JBCefApp` on 2026.2. The embedded browser (JCEF) moved out of the platform core into a bundled plugin in that release, so the dependency on it is now declared explicitly. This build therefore requires 2026.2 or newer; for 2025.2–2026.1 use 0.1.2.
 
 ## [0.1.2] - 2026-07-17
@@ -54,7 +58,8 @@
 - HiDPI-aware rendering on Retina/HiDPI displays.
 - JCEF availability fallback: shows an explanatory message instead of crashing on IDE installations without embedded Chromium.
 
-[Unreleased]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/felixstieglitz/niivue-jetbrains/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/felixstieglitz/niivue-jetbrains/commits/v0.1.0
