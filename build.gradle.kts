@@ -1,4 +1,5 @@
 import org.jetbrains.changelog.Changelog
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel
 
@@ -13,13 +14,29 @@ dependencies {
 
     // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
     intellijPlatform {
-        intellijIdea("2025.2.6.2")
+        intellijIdea("2026.2")
+        // Since 262 the JCEF API is no longer part of the platform core but of
+        // the bundled "Web Browser (JCEF)" plugin. These two modules carry the
+        // classes the viewer uses -- com.intellij.ui.jcef.* and org.cef.* --
+        // and mirror the <dependencies> block in plugin.xml; without them the
+        // editor sources do not compile.
+        bundledModule("intellij.platform.ui.jcef")
+        bundledModule("intellij.libraries.jcef")
         testFramework(TestFrameworkType.Platform)
     }
 }
 
 intellijPlatform {
     pluginConfiguration {
+        ideaVersion {
+            // Keep the Marketplace compatibility floor stable when the
+            // development platform is upgraded to a newer IDE release.
+            sinceBuild = "262"
+            // Do not reject future IDE releases solely because of an
+            // artificial upper bound; the verifier checks API compatibility.
+            untilBuild = provider { null }
+        }
+
         // Marketplace change notes, rendered from CHANGELOG.md. During
         // development the [Unreleased] section is used; in the Release
         // workflow patchChangelog runs before publishPlugin, so the freshly
@@ -49,6 +66,20 @@ intellijPlatform {
         token = providers.environmentVariable("PUBLISH_TOKEN")
     }
     pluginVerification {
+        // Check both the minimum supported release and the newest available
+        // IntelliJ IDEA/PyCharm releases. This keeps API regressions visible
+        // without imposing an until-build that would reject a new IDE upfront.
+        ides {
+            create(IntelliJPlatformType.IntellijIdea, "2026.2")
+            create(IntelliJPlatformType.PyCharm, "2026.2")
+            latest {
+                types = listOf(
+                    IntelliJPlatformType.IntellijIdea,
+                    IntelliJPlatformType.PyCharm,
+                )
+            }
+        }
+
         // By default the verifier only fails the build on hard
         // incompatibilities; deprecated/internal/experimental API findings are
         // logged into a report artifact nobody opens while CI stays green.
