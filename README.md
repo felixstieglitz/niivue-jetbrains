@@ -47,7 +47,8 @@ Install via the JetBrains Marketplace from within your IDE:
 
 ## Requirements
 
-- A JetBrains IDE **2025.2 or newer** with JCEF (embedded Chromium) support - true for all major IDEs (IntelliJ IDEA, PyCharm, WebStorm, CLion, …).
+- A JetBrains IDE **2026.2 or newer** with JCEF (embedded Chromium) support - true for all major IDEs (IntelliJ IDEA, PyCharm, WebStorm, CLion, …).
+  On 2025.2–2026.1 the Marketplace keeps serving version 0.1.2, which works there: 2026.2 moved JCEF out of the platform core into a separate bundled plugin, so one build cannot cover both.
 - WebGL2-capable graphics. On hardware without WebGL2 the rendering surface stays blank.
 
 ## How it works
