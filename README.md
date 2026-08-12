@@ -79,10 +79,12 @@ explicitly.
 
 **Add Image > DICOM folder** scans the picked directory for DICOM slices (name
 pre-filter, then a `DICM` magic-byte check) and hands the series to the page,
-which converts it to NIfTI with the bundled
+which converts it to NIfTI in a dedicated Web Worker with the bundled
 [dcm2niix](https://github.com/rordenlab/dcm2niix) WASM build before handing the
 result to Niivue. dcm2niix groups the slices itself, so a folder holding
-several acquisitions opens one canvas per series.
+several acquisitions opens one canvas per series. URL-backed slices are loaded
+sequentially inside the worker to avoid keeping a second complete copy of the
+input series in the browser's UI thread.
 
 Each added image gets its own canvas and Niivue instance in a grid that
 rebalances as images come and go. Crosshair, pan and 3D rotation are

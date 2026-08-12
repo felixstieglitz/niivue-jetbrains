@@ -46,6 +46,8 @@ window.NiivueViewer = (function () {
 
     const EXAMPLE_IMAGE_URL = 'https://niivue.github.io/niivue-demo-images/mni152.nii.gz';
     const TILE_GAP = 4;
+    const viewerScriptUrl = document.currentScript && document.currentScript.src;
+    const DICOM_WORKER_URL = new URL('dicom-worker.js', viewerScriptUrl || document.baseURI).href;
 
     /**
      * Canvas tiles, one Niivue instance each — the "Add Image" grid.
@@ -108,6 +110,7 @@ window.NiivueViewer = (function () {
             cursor: pointer; padding: 0 3px; border-radius: 3px;
         }
         .tile-close:hover { background: #444; color: #fff; }
+        .tile-close:disabled { color: #555; cursor: default; background: none; }
         #tiles.multi .tile-label { display: flex; }
         #tiles.multi .tile.active { outline: 1px solid #2d4a6b; outline-offset: -1px; }
         #meta, #status, #loc {
@@ -188,6 +191,10 @@ window.NiivueViewer = (function () {
 
     function setStatus(text) {
         status.textContent = text || '';
+    }
+
+    function errorMessage(err) {
+        return err && err.message ? err.message : String(err);
     }
 
     function closePanels() {
@@ -322,9 +329,45 @@ window.NiivueViewer = (function () {
         tilesEl.appendChild(tile);
 
         const inst = createNiivueInstance();
-        inst.attachToCanvas(canvasEl);
-        const view = { nv: inst, canvas: canvasEl, tile: tile, nameEl: name };
+        const view = {
+            nv: inst,
+            canvas: canvasEl,
+            tile: tile,
+            nameEl: name,
+            closeEl: close,
+            ready: null,
+            initializationSettled: false,
+            initializationError: null,
+            loading: false,
+            removed: false,
+            resourcesReleased: false,
+            abortController: null,
+        };
         views.push(view);
+
+        // Niivue initializes WebGL shaders asynchronously. Keep the promise on
+        // the view so every volume load waits for a fully initialized instance.
+        // The rejection is handled here immediately to avoid an unhandled
+        // promise when an empty bench tile has no volume loaded yet.
+        close.disabled = true;
+        view.ready = inst.attachToCanvas(canvasEl).then(function () {
+            view.initializationSettled = true;
+            if (view.removed) {
+                releaseNiivueResources(view);
+                return false;
+            }
+            if (!view.loading) close.disabled = false;
+            return true;
+        }).catch(function (err) {
+            view.initializationSettled = true;
+            view.initializationError = err;
+            releaseNiivueResources(view);
+            if (!view.removed) {
+                setStatus('Viewer initialization error: ' + errorMessage(err));
+                console.error('[Niivue] initialization failed:', err);
+            }
+            return false;
+        });
 
         // Activate on any interaction with the tile (capture phase: the
         // canvas swallows mouse events for its own drag handling).
@@ -337,21 +380,40 @@ window.NiivueViewer = (function () {
         });
 
         installLocationReadoutFor(inst);
-        new ResizeObserver(function () { inst.resizeListener(); }).observe(canvasEl);
         layoutTiles();
         return view;
+    }
+
+    function releaseNiivueResources(view) {
+        if (view.resourcesReleased) return;
+        view.resourcesReleased = true;
+        try {
+            view.nv.broadcastTo([]);
+        } catch (err) {
+            console.warn('[Niivue] could not clear tile synchronization:', err);
+        }
+        try {
+            if (typeof view.nv.cleanup === 'function') view.nv.cleanup();
+        } catch (err) {
+            console.warn('[Niivue] could not clean up tile listeners:', err);
+        }
+        try {
+            const ext = view.nv.gl && view.nv.gl.getExtension('WEBGL_lose_context');
+            if (ext) ext.loseContext();
+        } catch (err) {
+            console.warn('[Niivue] could not release the tile WebGL context:', err);
+        }
     }
 
     function removeTile(view) {
         if (views.length <= 1) return; // the last tile stays (base viewer)
         const index = views.indexOf(view);
-        if (index < 0) return;
+        if (index < 0 || view.loading) return;
+        view.removed = true;
+        if (view.abortController) view.abortController.abort();
         views.splice(index, 1);
+        if (view.initializationSettled) releaseNiivueResources(view);
         view.tile.remove();
-        // Free the WebGL context right away instead of waiting for GC —
-        // Chromium caps live contexts per page, and each tile holds one.
-        const ext = view.nv.gl && view.nv.gl.getExtension('WEBGL_lose_context');
-        if (ext) ext.loseContext();
         setActive(Math.min(index, views.length - 1));
         wireSync();
         layoutTiles();
@@ -365,7 +427,9 @@ window.NiivueViewer = (function () {
      */
     function targetViewForNewImage() {
         for (let i = 0; i < views.length; i++) {
-            if (views[i].nv.volumes.length === 0) return views[i];
+            if (!views[i].loading && !views[i].removed && views[i].nv.volumes.length === 0) {
+                return views[i];
+            }
         }
         return createTile();
     }
@@ -792,37 +856,78 @@ window.NiivueViewer = (function () {
      * tile) so the grid stays coherent.
      */
     async function loadIntoView(view, source) {
-        setStatus('Loading ' + source.name +
-            (source.sizeMB >= 200 ? ' (' + source.sizeMB + ' MB, this may take a moment)...' : '...'));
-        let buf = source.buffer;
-        if (!buf) {
-            const resp = await fetch(source.url);
-            if (!resp.ok) throw new Error('fetch failed: HTTP ' + resp.status);
-            buf = await resp.arrayBuffer();
+        if (view.loading) throw new Error('this viewer tile is already loading an image');
+        if (view.removed) throw new Error('this viewer tile has already been removed');
+
+        view.loading = true;
+        view.closeEl.disabled = true;
+        try {
+            const initialized = await view.ready;
+            if (!initialized) {
+                throw view.initializationError || new Error('viewer initialization was cancelled');
+            }
+            if (view.removed) throw new Error('viewer was removed while initializing');
+
+            setStatus('Loading ' + source.name +
+                (source.sizeMB >= 200 ? ' (' + source.sizeMB + ' MB, this may take a moment)...' : '...'));
+            let buf = source.buffer;
+            if (!buf) {
+                view.abortController = new AbortController();
+                const resp = await fetch(source.url, { signal: view.abortController.signal });
+                if (!resp.ok) throw new Error('fetch failed: HTTP ' + resp.status);
+                buf = await resp.arrayBuffer();
+            }
+            if (view.removed) throw new Error('viewer was removed while loading');
+
+            const sliceType = nv && nv.volumes.length > 0 ? nv.opts.sliceType : null;
+            while (view.nv.volumes.length > 0) view.nv.removeVolume(view.nv.volumes[0]);
+            await view.nv.loadFromArrayBuffer(buf, source.name);
+            if (view.removed) throw new Error('viewer was removed while loading');
+
+            view.nameEl.textContent = source.name;
+            applyTogglesTo(view.nv);
+            view.nv.opts.dragMode = state.zoomMode ? DRAG.pan : DRAG.contrast;
+            view.nv.opts.dragModePrimary = state.zoomMode ? DRAG.pan : DRAG.crosshair;
+            if (sliceType !== null && view.nv !== nv) view.nv.setSliceType(sliceType);
+            wireSync();
+            setStatus('');
+        } finally {
+            view.abortController = null;
+            view.loading = false;
+            if (!view.removed && !view.initializationError) view.closeEl.disabled = false;
         }
-        const sliceType = nv && nv.volumes.length > 0 ? nv.opts.sliceType : null;
-        while (view.nv.volumes.length > 0) view.nv.removeVolume(view.nv.volumes[0]);
-        await view.nv.loadFromArrayBuffer(buf, source.name);
-        view.nameEl.textContent = source.name;
-        applyTogglesTo(view.nv);
-        view.nv.opts.dragMode = state.zoomMode ? DRAG.pan : DRAG.contrast;
-        view.nv.opts.dragModePrimary = state.zoomMode ? DRAG.pan : DRAG.crosshair;
-        if (sliceType !== null && view.nv !== nv) view.nv.setSliceType(sliceType);
-        wireSync();
-        setStatus('');
     }
 
     /** Adds one image on its own tile; removes the tile again on failure. */
-    async function addImageTile(source) {
+    async function addImageTileNow(source) {
         const view = targetViewForNewImage();
         try {
             await loadIntoView(view, source);
-            setActive(views.indexOf(view));
+            const index = views.indexOf(view);
+            if (index >= 0) setActive(index);
         } catch (err) {
             if (view.nv.volumes.length === 0) removeTile(view);
-            setStatus('Error: ' + (err && err.message ? err.message : String(err)));
+            setStatus('Error: ' + errorMessage(err));
             console.error('[Niivue] add image failed:', err);
         }
+    }
+
+    // One queue covers toolbar clicks, DICOM outputs and the public bench API.
+    // It prevents two asynchronous actions from claiming the same empty tile
+    // and keeps status updates deterministic.
+    let imageLoadQueue = Promise.resolve();
+
+    function enqueueImageLoad(operation) {
+        const queued = imageLoadQueue.then(operation);
+        imageLoadQueue = queued.catch(function () {});
+        return queued;
+    }
+
+    function addImageTile(source) {
+        const operation = enqueueImageLoad(function () {
+            return addImageTileNow(source);
+        });
+        return operation;
     }
 
     async function addImageFiles() {
@@ -837,42 +942,64 @@ window.NiivueViewer = (function () {
         await addImageTile({ url: EXAMPLE_IMAGE_URL, name: 'mni152.nii.gz', sizeMB: 4 });
     }
 
-    /**
-     * Converts a DICOM series to NIfTI with the bundled dcm2niix WASM
-     * build, mirroring @niivue/dicom-loader: files into /input, callMain,
-     * NIfTI files out of /output. dcm2niix groups slices itself, so a folder
-     * holding several acquisitions yields one file per series.
-     *
-     * Runs on the main thread (upstream uses a worker): a module worker
-     * would have to be assembled from inlined sources to survive JCEF's
-     * request routing, and dcm2niix converts a typical series fast enough
-     * that blocking the page briefly is the smaller cost. A fresh module
-     * instance per conversion keeps the WASM filesystem clean.
-     */
-    async function convertDicomSeries(files) {
-        // Resolved against this module's own URL (import() in a classic
-        // script uses the script as referrer), and dcm2niix.js ships next
-        // to viewer.js in both hosts — plugin resources and repo alike.
-        const factory = (await import('./dcm2niix.js')).default;
-        const mod = await factory({ print: function () {}, printErr: function () {} });
-        mod.FS.mkdir('/input');
-        mod.FS.mkdir('/output');
-        files.forEach(function (f) {
-            // Flatten path separators and normalize the Siemens .ima
-            // extension, like niivue-vscode's loaders do.
-            const name = f.name.split('/').join('_').replace(/\.ima$/i, '.dcm');
-            mod.FS.createDataFile('/input', name, new Uint8Array(f.buffer), true, true);
-        });
-        const exitCode = mod.callMain(['-o', '/output', '/input']);
-        if (exitCode !== 0 && exitCode !== 3) {
-            throw new Error('dcm2niix failed with exit code ' + exitCode);
-        }
-        return mod.FS.readdir('/output')
-            .filter(function (n) { return n.endsWith('.nii') || n.endsWith('.nii.gz'); })
-            .map(function (n) {
-                const data = mod.FS.readFile('/output/' + n); // Uint8Array
-                return { name: n, buffer: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) };
+    let dicomLoading = false;
+
+    /** Runs dcm2niix away from the UI thread and transfers buffers without cloning. */
+    function convertDicomSeries(items, onProgress) {
+        return new Promise(function (resolve, reject) {
+            let worker;
+            let settled = false;
+            try {
+                worker = new Worker(DICOM_WORKER_URL, { type: 'module' });
+            } catch (err) {
+                reject(err);
+                return;
+            }
+
+            function finish(callback, value) {
+                if (settled) return;
+                settled = true;
+                worker.terminate();
+                callback(value);
+            }
+
+            worker.addEventListener('message', function (event) {
+                const message = event.data || {};
+                if (message.type === 'progress') {
+                    if (onProgress) onProgress(message);
+                    return;
+                }
+                if (message.type === 'result') {
+                    finish(resolve, message.series || []);
+                    return;
+                }
+                if (message.type === 'error') {
+                    finish(reject, new Error(message.message || 'DICOM conversion failed'));
+                }
             });
+            worker.addEventListener('error', function (event) {
+                event.preventDefault();
+                finish(reject, new Error(event.message || 'DICOM worker failed'));
+            }, { once: true });
+            worker.addEventListener('messageerror', function () {
+                finish(reject, new Error('DICOM worker returned an unreadable response'));
+            }, { once: true });
+
+            const payload = items.map(function (item) {
+                return { name: item.name, url: item.url, buffer: item.buffer };
+            });
+            const transfers = payload
+                .map(function (item) { return item.buffer; })
+                .filter(function (buffer) { return buffer instanceof ArrayBuffer; });
+            try {
+                worker.postMessage(
+                    { type: 'convert', items: payload },
+                    Array.from(new Set(transfers))
+                );
+            } catch (err) {
+                finish(reject, err);
+            }
+        });
     }
 
     /**
@@ -883,18 +1010,20 @@ window.NiivueViewer = (function () {
      * automate a native folder chooser.
      */
     async function loadDicomFiles(items) {
+        if (dicomLoading) {
+            setStatus('A DICOM series is already loading.');
+            return;
+        }
+        dicomLoading = true;
         try {
             setStatus('Loading DICOM series (' + items.length + ' files)...');
-            const files = await Promise.all(items.map(async function (item) {
-                if (item.buffer) return item;
-                const resp = await fetch(item.url);
-                if (!resp.ok) throw new Error('fetch failed: HTTP ' + resp.status);
-                return { name: item.name, buffer: await resp.arrayBuffer() };
-            }));
-            setStatus('Converting DICOM series (dcm2niix)...');
-            // Let the status text paint before callMain blocks the thread.
-            await new Promise(function (r) { setTimeout(r, 30); });
-            const converted = await convertDicomSeries(files);
+            const converted = await convertDicomSeries(items, function (progress) {
+                if (progress.stage === 'loading') {
+                    setStatus('Loading DICOM file ' + progress.completed + ' / ' + progress.total + '...');
+                } else if (progress.stage === 'converting') {
+                    setStatus('Converting DICOM series (dcm2niix)...');
+                }
+            });
             if (converted.length === 0) {
                 throw new Error('no NIfTI volume came out of the DICOM conversion');
             }
@@ -902,8 +1031,10 @@ window.NiivueViewer = (function () {
                 await addImageTile(series);
             }
         } catch (err) {
-            setStatus('DICOM error: ' + (err && err.message ? err.message : String(err)));
+            setStatus('DICOM error: ' + errorMessage(err));
             console.error('[Niivue] DICOM load failed:', err);
+        } finally {
+            dicomLoading = false;
         }
     }
 
@@ -915,7 +1046,7 @@ window.NiivueViewer = (function () {
 
     function renderAddImageMenu(panel) {
         addItem(panel, 'File(s)…', addImageFiles);
-        addItem(panel, 'DICOM folder…', addDcmFolder);
+        addItem(panel, 'DICOM folder…', addDcmFolder, { disabled: dicomLoading });
         addItem(panel, 'Example image (MNI152)', addExampleImage);
     }
 
@@ -1330,14 +1461,16 @@ window.NiivueViewer = (function () {
     // base volume replaces what tile 0 currently shows (relevant for the
     // bench, where a new base can be chosen repeatedly); tiles added via
     // Add Image are untouched.
-    window.loadNiivueVolume = async function (url, name, sizeMB) {
-        try {
-            await loadIntoView(views[0], { url: url, name: name, sizeMB: sizeMB });
-            setActive(0);
-        } catch (err) {
-            setStatus('Error: ' + (err && err.message ? err.message : String(err)));
-            console.error('[Niivue] load failed:', err);
-        }
+    window.loadNiivueVolume = function (url, name, sizeMB) {
+        return enqueueImageLoad(async function () {
+            try {
+                await loadIntoView(views[0], { url: url, name: name, sizeMB: sizeMB });
+                setActive(0);
+            } catch (err) {
+                setStatus('Error: ' + errorMessage(err));
+                console.error('[Niivue] load failed:', err);
+            }
+        });
     };
 
     /* ------------------------------------------------------------------ */

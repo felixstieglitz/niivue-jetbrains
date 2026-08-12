@@ -5,6 +5,12 @@
 ## [Unreleased]
 ### Fixed
 - The viewer failed to open with `NoClassDefFoundError: com/intellij/ui/jcef/JBCefApp` on 2026.2. The embedded browser (JCEF) moved out of the platform core into a bundled plugin in that release, so the dependency on it is now declared explicitly. This build therefore requires 2026.2 or newer; for 2025.2–2026.1 use 0.1.2.
+- Volume loads now wait for Niivue's asynchronous WebGL initialization, and failed initialization is reported instead of becoming an unhandled promise rejection.
+- Removed image tiles now release Niivue listeners, synchronization references and WebGL resources.
+- Image loads are queued and tiles track their loading state, preventing concurrent actions from claiming the same empty canvas.
+
+### Changed
+- DICOM conversion now runs in a dedicated Web Worker. URL-backed slices are loaded sequentially inside the worker to keep the UI responsive and reduce peak main-thread memory usage.
 
 ## [0.1.2] - 2026-07-17
 

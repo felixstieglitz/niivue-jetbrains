@@ -18,9 +18,9 @@ No dev server is needed for most of the bench: classic `<script>` tags and
 `file://` object URLs work without one. Pick a **Base volume** at the top, then
 exercise the toolbar.
 
-**Except for DICOM:** loading the dcm2niix WASM module uses a dynamic
-`import()`, which browsers block on `file://`. To test **Add Image > DICOM
-folder**, serve the parent of both repos over HTTP:
+**Except for DICOM:** the dcm2niix WASM module runs in a module worker, which
+browsers block on `file://`. To test **Add Image > DICOM folder**, serve the
+parent of both repos over HTTP:
 
 ```
 cd .. && python3 -m http.server 8765

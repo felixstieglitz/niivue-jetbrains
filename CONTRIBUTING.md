@@ -38,7 +38,7 @@ If you develop inside IntelliJ IDEA, shared run configurations are included:
 |---|---|
 | `src/main/kotlin/.../filetype/` | `NiftiFileType` — registers the supported extensions |
 | `src/main/kotlin/.../editor/` | `NiivueFileEditorProvider` and `NiivueFileEditor` — the editor tab, JCEF browser, volume loading, the Swing wheel bridge, and the `JBCefJSQuery` file-picker bridge for overlays |
-| `src/main/resources/webview/` | `index.html` (viewer page), `viewer.js` (toolbar + viewer logic, shared with the test bench), and the bundled `niivue.umd.js` |
+| `src/main/resources/webview/` | `index.html` (viewer page), `viewer.js` (toolbar + viewer logic, shared with the test bench), `dicom-worker.js` (off-thread DICOM conversion), and the bundled Niivue/dcm2niix assets |
 | `src/main/resources/META-INF/plugin.xml` | Plugin manifest |
 | `tests/` | `bench.html` — a manual visual test bench that loads the real `viewer.js` + `niivue.umd.js`, plus a `README.md` checklist |
 | `src/test/kotlin/` | Tests |

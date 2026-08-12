@@ -204,9 +204,12 @@ class NiivueFileEditor(
         val handler = NiivueLocalRequestHandler(VIEWER_PROTOCOL, VIEWER_AUTHORITY)
         handler.addResource("index.html") { classpathResourceHandler("/webview/index.html", "text/html") }
         handler.addResource("viewer.js") { classpathResourceHandler("/webview/viewer.js", "text/javascript") }
+        handler.addResource("dicom-worker.js") {
+            classpathResourceHandler("/webview/dicom-worker.js", "text/javascript")
+        }
         handler.addResource("niivue.umd.js") { classpathResourceHandler("/webview/niivue.umd.js", "text/javascript") }
-        // dcm2niix WASM build, imported on demand by viewer.js to convert
-        // DICOM series to NIfTI in the page (Add Image > DICOM Folder).
+        // dcm2niix WASM build, imported on demand by dicom-worker.js to
+        // convert DICOM series without blocking the browser UI thread.
         handler.addResource("dcm2niix.js") { classpathResourceHandler("/webview/dcm2niix.js", "text/javascript") }
         handler.addResource("dcm2niix.wasm") { classpathResourceHandler("/webview/dcm2niix.wasm", "application/wasm") }
         handler.addResource(volumePath) { volumeStreamHandler(file) }

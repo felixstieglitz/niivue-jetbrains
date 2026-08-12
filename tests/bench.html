@@ -84,8 +84,8 @@
 
         // Add Image > DICOM folder: a directory input; buffers are read
         // here directly, no object URLs needed. NOTE: the dcm2niix WASM
-        // module is loaded via dynamic import(), which browsers block on
-        // file:// — serve the repo root over HTTP to test DICOM
+        // module runs in a module worker, which browsers block on file://.
+        // Serve the repo root over HTTP to test DICOM
         // (python3 -m http.server, then open /tests/bench.html).
         function pickDcmFolderViaInput() {
             return new Promise(function (resolve) {
